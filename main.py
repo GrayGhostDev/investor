@@ -6,6 +6,7 @@ from components.visualizations import render_visualizations
 from components.pitch_deck import render_pitch_deck_generator
 from components.comparison import render_comparison_section
 from components.sentiment import render_sentiment_tracker
+from components.translator import render_translator_section
 from utils.styling import load_css, set_page_config
 
 def main():
@@ -27,7 +28,7 @@ def main():
         st.session_state.error = None
 
     # Create tabs for different sections
-    tabs = st.tabs(["Search", "Dashboard", "Analysis", "Pitch Deck", "Compare", "Market Sentiment"])
+    tabs = st.tabs(["Search", "Dashboard", "Analysis", "Pitch Deck", "Compare", "Market Sentiment", "Translator"])
 
     with tabs[0]:
         render_search_section()
@@ -58,6 +59,9 @@ def main():
 
     with tabs[5]:
         render_sentiment_tracker()
+
+    with tabs[6]:
+        render_translator_section()
 
     # Error handling
     if st.session_state.error:

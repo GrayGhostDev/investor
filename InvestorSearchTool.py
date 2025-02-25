@@ -3,11 +3,12 @@ import os
 import random
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-
+from typing import Dict, List, Optional, Tuple, Any
 import pandas as pd
 from fake_useragent import UserAgent
+from sqlalchemy import or_, and_, desc, asc
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.expression import func
 
 # Import local modules
 from scraping_config import RATE_LIMITS
@@ -34,16 +35,28 @@ class InvestorSearchTool:
             'default': {'requests': 30, 'window': 60}  # 30 requests per minute default
         }
 
-    def get_investor_data(self, search_terms: List[str]) -> pd.DataFrame:
-        """Get investor data with database integration"""
+    def get_investor_data(
+        self,
+        search_terms: List[str],
+        filters: Dict[str, Any] = None,
+        sort_by: str = "Investment Count",
+        sort_order: str = "descending"
+    ) -> pd.DataFrame:
+        """Get investor data with advanced filtering and sorting"""
         try:
             # Get database session
             session = self.db.get_session()
 
-            # First try to get data from database
-            investors = self._get_from_database(session, search_terms)
+            # Build query with filters
+            query = self._build_filtered_query(session, search_terms, filters)
 
-            # If no data in database, use sample data and store it
+            # Apply sorting
+            query = self._apply_sorting(query, sort_by, sort_order)
+
+            # Execute query
+            investors = query.all()
+
+            # If no data found, use sample data
             if not investors:
                 sample_data = self._get_sample_data()
                 investors = self._store_in_database(session, sample_data)
@@ -71,6 +84,75 @@ class InvestorSearchTool:
         finally:
             session.close()
 
+    def _build_filtered_query(
+        self,
+        session: Session,
+        search_terms: List[str],
+        filters: Optional[Dict[str, Any]] = None
+    ):
+        """Build SQL query with filters"""
+        query = session.query(Investor)
+
+        # Apply search terms
+        if search_terms:
+            search_filters = []
+            for term in search_terms:
+                term = f"%{term}%"
+                search_filters.extend([
+                    Investor.name.ilike(term),
+                    Investor.type.ilike(term),
+                    Investor.location.ilike(term)
+                ])
+            query = query.filter(or_(*search_filters))
+
+        # Apply additional filters if provided
+        if filters:
+            query = self._apply_advanced_filters(query, filters)
+
+        return query
+
+    def _apply_advanced_filters(self, query, filters: Dict[str, Any]):
+        """Apply advanced filters to query"""
+
+        # Investment count range filter
+        if "investment_range" in filters:
+            min_inv, max_inv = filters["investment_range"]
+            query = query.filter(
+                and_(
+                    Investor.investments >= min_inv,
+                    Investor.investments <= max_inv
+                )
+            )
+
+        # Investment size filter
+        if "investment_size" in filters:
+            min_size, max_size = filters["investment_size"]
+            # Add logic for investment size filtering
+            # This would require adding an investment_size field to the Investor model
+
+        # Years active filter
+        if "years_active" in filters:
+            min_years, max_years = filters["years_active"]
+            # Add logic for years active filtering
+            # This would require adding a founded_year field to the Investor model
+
+        return query
+
+    def _apply_sorting(self, query, sort_by: str, sort_order: str):
+        """Apply sorting to query"""
+        sort_field = {
+            "Investment Count": Investor.investments,
+            "Name": Investor.name,
+            "Location": Investor.location
+        }.get(sort_by, Investor.investments)
+
+        if sort_order == "descending":
+            query = query.order_by(desc(sort_field))
+        else:
+            query = query.order_by(asc(sort_field))
+
+        return query
+
     def _get_from_database(self, session: Session, search_terms: List[str]) -> List[Investor]:
         """Get investors from database matching search terms"""
         try:
@@ -86,7 +168,7 @@ class InvestorSearchTool:
                         Investor.type.ilike(term),
                         Investor.location.ilike(term)
                     ])
-                query = query.filter(*filters)
+                query = query.filter(or_(*filters))
 
             return query.all()
 

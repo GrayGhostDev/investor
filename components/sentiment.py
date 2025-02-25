@@ -90,10 +90,10 @@ class MarketSentimentTracker:
 
         for data in sentiment_data:
             dates.append(data.get('timestamp'))
-            scores.append(data.get('sentiment_score'))
-            confidence.append(data.get('confidence_level'))
+            scores.append(data.get('sentiment_score', 0))
+            confidence.append(data.get('confidence_level', 0))
 
-        # Create subplot with secondary y-axis
+        # Create subplot with shared x-axis
         fig = make_subplots(specs=[[{"secondary_y": True}]])
 
         # Add sentiment score line
@@ -131,24 +131,30 @@ class MarketSentimentTracker:
 
     def create_sector_sentiment(self, sentiment_data: List[Dict]) -> go.Figure:
         """Create sector-wise sentiment visualization"""
+        # Initialize sector data
         sectors = {}
+
+        # Process sentiment data
         for data in sentiment_data:
             for sector in data.get('sectors', []):
                 if sector not in sectors:
                     sectors[sector] = []
                 sectors[sector].append(data.get('sentiment_score', 0))
 
+        # Calculate averages
         sector_avg = {
-            sector: sum(scores) / len(scores)
+            sector: sum(scores) / len(scores) if scores else 0
             for sector, scores in sectors.items()
         }
 
+        # Create bar chart
         fig = go.Figure(data=go.Bar(
             x=list(sector_avg.keys()),
             y=list(sector_avg.values()),
             marker_color=px.colors.qualitative.Set3
         ))
 
+        # Update layout
         fig.update_layout(
             title="Sector-wise Sentiment Analysis",
             xaxis_title="Sectors",
@@ -172,6 +178,12 @@ def render_sentiment_tracker():
     Data is sourced from major financial news outlets and analyzed using AI.
     """)
 
+    # Initialize session state if needed
+    if 'sentiment_data' not in st.session_state:
+        st.session_state.sentiment_data = []
+    if 'last_update' not in st.session_state:
+        st.session_state.last_update = None
+
     # Source selection
     selected_sources = st.multiselect(
         "Select News Sources",
@@ -188,10 +200,8 @@ def render_sentiment_tracker():
         help="Select how often to update sentiment analysis (in minutes)"
     )
 
-    # Initialize or get session state
-    if 'sentiment_data' not in st.session_state:
-        st.session_state.sentiment_data = []
-    if 'last_update' not in st.session_state:
+    # Add manual refresh button
+    if st.button("Refresh Data"):
         st.session_state.last_update = None
 
     # Check if update is needed
@@ -256,8 +266,3 @@ def render_sentiment_tracker():
 
     else:
         st.info("Waiting for sentiment data... Please allow a few minutes for initial analysis.")
-
-    # Add auto-refresh
-    if st.checkbox("Enable Auto-refresh", value=True):
-        time.sleep(1)  # Prevent too frequent refreshes
-        st.experimental_rerun()

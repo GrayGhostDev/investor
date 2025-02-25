@@ -1,0 +1,1599 @@
+import streamlit as st
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.webdriver.remote.webelement import WebElement
+import openai
+import json
+import time
+import random
+from typing import Dict, List, Optional, Any, Union, TypedDict, Callable
+import logging
+from datetime import datetime, timedelta
+from fake_useragent import UserAgent
+import backoff
+from dotenv import load_dotenv
+import os
+import shutil
+from requests.exceptions import RequestException, Timeout, ConnectionError
+import sys
+from pydantic import BaseModel, Field, field_validator
+import re
+from dataclasses import dataclass
+from enum import Enum
+import numpy as np
+from fuzzywuzzy import fuzz
+from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderTimedOut
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from json.decoder import JSONDecodeError
+from config import (
+    scraping_config,
+    scraping_selectors,
+    data_enrichment_config as enrichment_config,
+    api_config,
+    webdriver_config
+)
+from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
+import asyncio
+import aiohttp
+from bs4 import BeautifulSoup
+import logging
+from functools import wraps
+from database import Database
+import plotly.express as px
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Custom Exceptions
+class APIKeyError(Exception):
+    """Raised when there are issues with API keys"""
+    pass
+
+class RateLimitError(Exception):
+    """Raised when API rate limits are exceeded"""
+    pass
+
+class DataValidationError(Exception):
+    """Raised when data validation fails"""
+    pass
+
+class ScrapingError(Exception):
+    """Raised when web scraping fails"""
+    pass
+
+class EnrichmentError(Exception):
+    """Raised when data enrichment fails"""
+    pass
+
+class RetryableError(Exception):
+    """Base class for errors that should trigger a retry"""
+    pass
+
+class TemporaryError(RetryableError):
+    """Raised for temporary issues that may resolve with retry"""
+    pass
+
+def handle_api_errors(func: Callable) -> Callable:
+    """Decorator to handle API errors with retries and logging"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        max_retries = 3
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except RateLimitError as e:
+                logger.warning(f"Rate limit hit on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+                else:
+                    raise
+            except APIKeyError as e:
+                logger.error(f"API Key error: {str(e)}")
+                raise
+            except TemporaryError as e:
+                logger.warning(f"Temporary error on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (2 ** attempt))
+                else:
+                    raise
+            except Exception as e:
+                logger.error(f"Unexpected error in {func.__name__}: {str(e)}")
+                raise
+    return wrapper
+
+# Rate Limiting Handler
+class RateLimitHandler:
+    """Handles rate limiting with sophisticated delay patterns and request tracking"""
+    
+    def __init__(self):
+        self.request_timestamps = {
+            'crunchbase': [],
+            'angellist': [],
+            'vcguide': []
+        }
+        self.rate_limits = {
+            'crunchbase': {'requests': 20, 'window': 60},  # 20 requests per minute
+            'angellist': {'requests': 30, 'window': 60},   # 30 requests per minute
+            'vcguide': {'requests': 40, 'window': 60}      # 40 requests per minute
+        }
+        self.delay_patterns = {
+            'crunchbase': {
+                'base_delay': (2, 5),
+                'burst_delay': (0.5, 1),
+                'burst_size': 3,
+                'burst_cooldown': 15
+            },
+            'angellist': {
+                'base_delay': (1.5, 4),
+                'burst_delay': (0.3, 0.8),
+                'burst_size': 4,
+                'burst_cooldown': 12
+            },
+            'vcguide': {
+                'base_delay': (1, 3),
+                'burst_delay': (0.2, 0.6),
+                'burst_size': 5,
+                'burst_cooldown': 10
+            }
+        }
+        self.last_burst = {source: datetime.min for source in self.request_timestamps.keys()}
+        self.requests_since_burst = {source: 0 for source in self.request_timestamps.keys()}
+
+
+    
+    def check_rate_limit(self, source: str) -> bool:
+        """Check if we're within rate limits with enhanced burst detection"""
+        now = datetime.now()
+        window = self.rate_limits[source]['window']
+        max_requests = self.rate_limits[source]['requests']
+        
+        # Remove timestamps older than the window
+        self.request_timestamps[source] = [
+            ts for ts in self.request_timestamps[source]
+            if (now - ts).total_seconds() < window
+        ]
+        
+        # Check if we're in a burst cooldown period
+        if (now - self.last_burst[source]).total_seconds() < self.delay_patterns[source]['burst_cooldown']:
+            max_requests = max(1, max_requests // 2)  # Reduce rate limit during cooldown
+        
+        return len(self.request_timestamps[source]) < max_requests
+    
+    def record_request(self, source: str):
+        """Record a request with burst tracking"""
+        now = datetime.now()
+        self.request_timestamps[source].append(now)
+        self.requests_since_burst[source] += 1
+        
+        # Check if we need to start a new burst cooldown
+        if self.requests_since_burst[source] >= self.delay_patterns[source]['burst_size']:
+            self.last_burst[source] = now
+            self.requests_since_burst[source] = 0
+    
+    def get_wait_time(self, source: str) -> float:
+        """Calculate wait time with randomized delays and burst patterns"""
+        if not self.request_timestamps[source]:
+            return self._get_random_delay(source, 'base_delay')
+        
+        now = datetime.now()
+        window = self.rate_limits[source]['window']
+        oldest_timestamp = min(self.request_timestamps[source])
+        time_passed = (now - oldest_timestamp).total_seconds()
+        
+        # Calculate base wait time
+        if time_passed < window:
+            base_wait = window - time_passed
+        else:
+            base_wait = 0
+        
+        # Add randomized delay based on current pattern
+        if self.requests_since_burst[source] < self.delay_patterns[source]['burst_size']:
+            additional_delay = self._get_random_delay(source, 'burst_delay')
+        else:
+            additional_delay = self._get_random_delay(source, 'base_delay')
+        
+        # Add jitter to make the pattern less predictable
+        jitter = random.uniform(-0.1, 0.1) * (base_wait + additional_delay)
+        
+        return max(0, base_wait + additional_delay + jitter)
+    
+    def _get_random_delay(self, source: str, delay_type: str) -> float:
+        """Get a random delay from the specified range"""
+        min_delay, max_delay = self.delay_patterns[source][delay_type]
+        # Use triangular distribution for more natural timing
+        return random.triangular(min_delay, max_delay, (min_delay + max_delay) / 2)
+    
+    def should_rotate_user_agent(self, source: str) -> bool:
+        """Determine if we should rotate the user agent"""
+        # Rotate user agent after each burst or randomly
+        return (self.requests_since_burst[source] == 0 or 
+                random.random() < 0.2)  # 20% chance of rotation
+    
+    def get_delay_multiplier(self, source: str) -> float:
+        """Get delay multiplier based on time of day and recent activity"""
+        hour = datetime.now().hour
+        
+        # Increase delays during typical peak hours
+        if 9 <= hour <= 17:  # 9 AM to 5 PM
+            base_multiplier = 1.5
+        else:
+            base_multiplier = 1.0
+        
+        # Add randomization to the multiplier
+        return base_multiplier * random.uniform(0.8, 1.2)
+    
+class DataProcessor:
+    """Handles data processing and validation for investor data"""
+    
+    def __init__(self):
+        """Initialize DataProcessor"""
+        self.logger = logging.getLogger(__name__)
+        self.geocoder = Nominatim(user_agent="investor_search_app")
+    
+    def process_investor_data(self, investors_data: List[Dict]) -> List[Dict]:
+        """Process and validate investor data"""
+        processed_data = []
+        
+        for investor in investors_data:
+            try:
+                # Validate required fields
+                if not self._validate_required_fields(investor):
+                    continue
+                
+                # Clean and standardize data
+                cleaned_investor = self._clean_investor_data(investor)
+                
+                # Enrich with additional data
+                enriched_investor = self._enrich_investor_data(cleaned_investor)
+                
+                processed_data.append(enriched_investor)
+                
+            except Exception as e:
+                self.logger.error(f"Error processing investor data: {str(e)}")
+                continue
+        
+        return processed_data
+    
+    def _validate_required_fields(self, investor: Dict) -> bool:
+        """Validate required fields in investor data"""
+        required_fields = ['name', 'source']
+        
+        for field in required_fields:
+            if not investor.get(field):
+                self.logger.warning(f"Missing required field: {field}")
+                return False
+        
+        return True
+    
+    def _clean_investor_data(self, investor: Dict) -> Dict:
+        """Clean and standardize investor data"""
+        cleaned = investor.copy()
+        
+        # Clean name
+        cleaned['name'] = self._clean_name(cleaned.get('name', ''))
+        
+        # Clean and standardize location
+        if 'location' in cleaned:
+            cleaned['location'] = self._standardize_location(cleaned['location'])
+        
+        # Clean investment count
+        if 'investments' in cleaned:
+            cleaned['investments'] = self._extract_number(cleaned['investments'])
+        
+        # Clean type
+        if 'type' in cleaned:
+            cleaned['type'] = self._standardize_investor_type(cleaned['type'])
+        
+        return cleaned
+    
+    def _enrich_investor_data(self, investor: Dict) -> Dict:
+        """Enrich investor data with additional information"""
+        enriched = investor.copy()
+        
+        # Add investment stages if not present
+        if 'investment_stages' not in enriched:
+            enriched['investment_stages'] = self._infer_investment_stages(enriched)
+        
+        # Add investment sectors if not present
+        if 'investment_sectors' not in enriched:
+            enriched['investment_sectors'] = self._infer_investment_sectors(enriched)
+        
+        # Add geocoding data if location is present
+        if 'location' in enriched:
+            enriched.update(self._add_geocoding_data(enriched['location']))
+        
+        return enriched
+    
+    def _clean_name(self, name: str) -> str:
+        """Clean investor name"""
+        # Remove extra whitespace
+        name = ' '.join(name.split())
+        
+        # Remove common suffixes
+        suffixes = [' LLC', ' Ltd', ' Inc', ' Corp']
+        for suffix in suffixes:
+            name = name.replace(suffix, '')
+        
+        return name.strip()
+    
+    def _standardize_location(self, location: str) -> str:
+        """Standardize location format"""
+        if not location:
+            return ''
+        
+        # Remove extra whitespace
+        location = ' '.join(location.split())
+        
+        # Try to extract city and country
+        parts = location.split(',')
+        if len(parts) >= 2:
+            city = parts[0].strip()
+            country = parts[-1].strip()
+            return f"{city}, {country}"
+        
+        return location.strip()
+    
+    def _extract_number(self, value: str) -> int:
+        """Extract number from string"""
+        if not value:
+            return 0
+        
+        # Extract digits
+        numbers = re.findall(r'\d+', value)
+        if numbers:
+            return int(numbers[0])
+        
+        return 0
+    
+    def _standardize_investor_type(self, investor_type: str) -> str:
+        """Standardize investor type"""
+        if not investor_type:
+            return 'Other'
+        
+        # Map common variations to standard types
+        type_mapping = {
+            'vc': 'Venture Capital',
+            'venture capital': 'Venture Capital',
+            'angel': 'Angel Investor',
+            'angel investor': 'Angel Investor',
+            'pe': 'Private Equity',
+            'private equity': 'Private Equity',
+            'accelerator': 'Accelerator',
+            'incubator': 'Incubator'
+        }
+        
+        normalized_type = investor_type.lower().strip()
+        return type_mapping.get(normalized_type, investor_type.title())
+    
+    def _infer_investment_stages(self, investor: Dict) -> List[str]:
+        """Infer investment stages based on investor data"""
+        stages = set()
+        
+        # Add stages based on investor type
+        type_stage_mapping = {
+            'Angel Investor': ['Seed', 'Pre-Seed'],
+            'Venture Capital': ['Seed', 'Series A', 'Series B'],
+            'Private Equity': ['Growth', 'Late Stage'],
+            'Accelerator': ['Pre-Seed', 'Seed'],
+            'Incubator': ['Pre-Seed']
+        }
+        
+        if 'type' in investor:
+            stages.update(type_stage_mapping.get(investor['type'], []))
+        
+        return sorted(list(stages))
+    
+    def _infer_investment_sectors(self, investor: Dict) -> List[str]:
+        """Infer investment sectors based on investor data"""
+        sectors = set()
+        
+        # Add default sectors based on source
+        source_sector_mapping = {
+            'pitchbook': ['Technology', 'Software'],
+            'cbinsights': ['Technology', 'Enterprise'],
+            'owler': ['Technology'],
+            'clearbit': ['Software']
+        }
+        
+        if 'source' in investor:
+            sectors.update(source_sector_mapping.get(investor['source'], []))
+        
+        return sorted(list(sectors))
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type(GeocoderTimedOut)
+    )
+    def _add_geocoding_data(self, location: str) -> Dict:
+        """Add geocoding data for location"""
+        try:
+            geocoding_data = {
+                'latitude': None,
+                'longitude': None,
+                'country_code': None
+            }
+            
+            if not location:
+                return geocoding_data
+            
+            # Get location data
+            location_data = self.geocoder.geocode(location)
+            if location_data:
+                geocoding_data.update({
+                    'latitude': location_data.latitude,
+                    'longitude': location_data.longitude,
+                    'country_code': location_data.raw.get('address', {}).get('country_code', '').upper()
+                })
+            
+            return geocoding_data
+            
+        except Exception as e:
+            self.logger.warning(f"Error geocoding location {location}: {str(e)}")
+            return geocoding_data
+
+class AdvancedDataCollector:
+    """Advanced data collection with multiple browser automation and async capabilities"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.session_config = {
+            'timeout': aiohttp.ClientTimeout(total=60),  # Increased timeout
+            'headers': {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            }
+        }
+        self.max_retries = 3
+        self.retry_delay = 5
+    
+    async def collect_data_async(self, urls: List[str]) -> List[Dict]:
+        """Collect data asynchronously using aiohttp and Playwright"""
+        async with aiohttp.ClientSession(**self.session_config) as session:
+            tasks = []
+            for url in urls:
+                if self._requires_javascript(url):
+                    tasks.append(self._collect_with_playwright(url))
+                else:
+                    tasks.append(self._collect_with_aiohttp(session, url))
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            processed_results = []
+            for result in results:
+                if isinstance(result, Exception):
+                    self.logger.error(f"Error collecting data: {str(result)}")
+                    continue
+                if result is not None:
+                    processed_results.append(result)
+            return processed_results
+
+    async def _collect_with_playwright(self, url: str) -> Optional[Dict]:
+        """Collect data using Playwright for JavaScript-heavy sites"""
+        for attempt in range(self.max_retries):
+            try:
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True)
+                    context = await browser.new_context(
+                        viewport={'width': 1920, 'height': 1080},
+                        user_agent=self.session_config['headers']['User-Agent']
+                    )
+                    page = await context.new_page()
+                    
+                    # Set longer timeouts
+                    page.set_default_timeout(60000)  # 60 seconds
+                    page.set_default_navigation_timeout(60000)
+                    
+                    await page.goto(url, wait_until='networkidle')
+                    await page.wait_for_load_state('domcontentloaded')
+                    
+                    # Wait for key elements based on source
+                    source = self._determine_source(url)
+                    if source == 'crunchbase':
+                        await page.wait_for_selector('.profile-section', timeout=60000)
+                    elif source == 'angellist':
+                        await page.wait_for_selector('.startup-profile', timeout=60000)
+                    
+                    content = await page.content()
+                    return self._parse_content(content, url)
+                    
+            except Exception as e:
+                self.logger.error(f"Attempt {attempt + 1} failed for {url}: {str(e)}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+                else:
+                    raise ScrapingError(f"Failed to collect data from {url} after {self.max_retries} attempts")
+                    
+    async def _collect_with_aiohttp(self, session: aiohttp.ClientSession, url: str) -> Optional[Dict]:
+        """Collect data using aiohttp for static sites"""
+        for attempt in range(self.max_retries):
+            try:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        return self._parse_content(content, url)
+                    elif response.status == 429:  # Rate limit
+                        raise RateLimitError(f"Rate limited by {url}")
+                    else:
+                        raise ScrapingError(f"HTTP {response.status} from {url}")
+            except Exception as e:
+                self.logger.error(f"Attempt {attempt + 1} failed for {url}: {str(e)}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+                else:
+                    raise ScrapingError(f"Failed to collect data from {url} after {self.max_retries} attempts")
+    
+    def _requires_javascript(self, url: str) -> bool:
+        """Determine if URL requires JavaScript rendering"""
+        js_required_domains = {'angel.co', 'linkedin.com', 'pitchbook.com'}
+        return any(domain in url for domain in js_required_domains)
+    
+    def _determine_source(self, url: str) -> str:
+        """Determine the data source from URL"""
+        if 'crunchbase.com' in url:
+            return 'crunchbase'
+        elif 'angel.co' in url:
+            return 'angellist'
+        elif 'vcguide.com' in url:
+            return 'vcguide'
+        return 'generic'
+    
+    def _parse_content(self, content: str, url: str) -> Dict:
+        """Parse HTML content based on source"""
+        soup = BeautifulSoup(content, 'lxml')
+        source = self._determine_source(url)
+        
+        if source == 'crunchbase':
+            return self._parse_crunchbase(soup)
+        elif source == 'angellist':
+            return self._parse_angellist(soup)
+        elif source == 'vcguide':
+            return self._parse_vcguide(soup)
+        else:
+            return self._parse_generic(soup)
+    
+    def _parse_crunchbase(self, soup: BeautifulSoup) -> Dict:
+        """Parse Crunchbase-specific HTML"""
+        data = {
+            'source': 'crunchbase',
+            'investors': []
+        }
+        
+        for card in soup.select('.investor-card'):
+            investor = {
+                'name': card.select_one('.investor-name').text.strip(),
+                'type': card.select_one('.investor-type').text.strip(),
+                'location': card.select_one('.location-info').text.strip(),
+                'investments': card.select_one('.investment-count').text.strip(),
+                'profile_url': card.select_one('.investor-profile-link')['href']
+            }
+            data['investors'].append(investor)
+        
+        return data
+    
+    def _parse_angellist(self, soup: BeautifulSoup) -> Dict:
+        """Parse AngelList-specific HTML"""
+        # Similar structure to _parse_crunchbase but with AngelList selectors
+        pass
+    
+    def _parse_vcguide(self, soup: BeautifulSoup) -> Dict:
+        """Parse VCGuide-specific HTML"""
+        # Similar structure to _parse_crunchbase but with VCGuide selectors
+        pass
+    
+    def _parse_generic(self, soup: BeautifulSoup) -> Dict:
+        """Parse generic investor data"""
+        # Fallback parsing for unknown sources
+        pass
+
+class WebDriverManager:
+    """Manages Selenium WebDriver setup and configuration"""
+    
+    def __init__(self):
+        """Initialize WebDriver manager"""
+        self.driver = None
+        self.current_proxy = None
+        self.proxy_rotation_time = None
+        self.setup_logging()
+    
+    def setup_logging(self):
+        """Setup logging for WebDriver operations"""
+        self.logger = logging.getLogger(__name__)
+    
+    def setup_chrome_driver(self, use_proxy: bool = False) -> None:
+        """Setup Chrome WebDriver with optional proxy"""
+        try:
+            chrome_options = Options()
+            
+            # Add default Chrome options
+            for option in webdriver_config.ADDITIONAL_CHROME_OPTIONS:
+                chrome_options.add_argument(option)
+            
+            # Set Chrome preferences
+            chrome_options.add_experimental_option('prefs', webdriver_config.PREFS)
+            
+            # Add proxy if enabled
+            if use_proxy and webdriver_config.PROXY_ENABLED:
+                proxy_options = webdriver_config.get_proxy_options()
+                for option in proxy_options:
+                    chrome_options.add_argument(option)
+                self.current_proxy = webdriver_config.PROXY_LIST[0]
+                self.proxy_rotation_time = datetime.now()
+            
+            # Initialize ChromeDriver
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(
+                service=service,
+                options=chrome_options
+            )
+            
+            # Set window size and timeouts
+            self.driver.set_window_size(1920, 1080)
+            self.driver.set_page_load_timeout(30)
+            self.driver.implicitly_wait(10)
+            
+            self.logger.info("Chrome WebDriver setup completed successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error setting up Chrome WebDriver: {str(e)}")
+            raise
+    
+    def rotate_proxy(self) -> None:
+        """Rotate to next proxy in the list"""
+        if not webdriver_config.PROXY_ENABLED or not webdriver_config.PROXY_LIST:
+            return
+            
+        current_index = webdriver_config.PROXY_LIST.index(self.current_proxy)
+        next_index = (current_index + 1) % len(webdriver_config.PROXY_LIST)
+        self.current_proxy = webdriver_config.PROXY_LIST[next_index]
+        self.proxy_rotation_time = datetime.now()
+        
+        # Restart WebDriver with new proxy
+        self.quit_driver()
+        self.setup_chrome_driver(use_proxy=True)
+    
+    def should_rotate_proxy(self) -> bool:
+        """Check if proxy rotation is needed"""
+        if not self.proxy_rotation_time:
+            return False
+            
+        rotation_interval = timedelta(minutes=webdriver_config.PROXY_ROTATION_INTERVAL)
+        return datetime.now() - self.proxy_rotation_time > rotation_interval
+    
+    def safe_get(self, url: str) -> bool:
+        """Safely navigate to URL with error handling"""
+        try:
+            self.driver.get(url)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error navigating to {url}: {str(e)}")
+            return False
+    
+    def wait_for_element(self, locator: tuple, timeout: int = 10) -> Optional[WebElement]:
+        """Wait for element to be present and visible"""
+        try:
+            wait = WebDriverWait(self.driver, timeout)
+            if isinstance(locator, tuple) and len(locator) == 2:
+                by, value = locator
+                return wait.until(
+                    EC.presence_of_element_located((by, value))
+                )
+            else:
+                # If locator is just a string, assume it's a CSS selector
+                return wait.until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, locator))
+                )
+        except TimeoutException:
+            self.logger.warning(f"Timeout waiting for element {locator}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error waiting for element {locator}: {str(e)}")
+            return None
+    
+    def quit_driver(self) -> None:
+        """Safely quit WebDriver"""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception as e:
+                self.logger.error(f"Error quitting WebDriver: {str(e)}")
+            finally:
+                self.driver = None
+
+# Update InvestorSearchTool to use the new collector
+class InvestorSearchTool:
+    """Tool for searching and collecting investor data from multiple sources"""
+    
+    def __init__(self, openai_api_key: Optional[str] = None):
+        """Initialize the investor search tool"""
+        self.logger = logging.getLogger(__name__)
+        self.webdriver_manager = WebDriverManager()
+        self.data_processor = DataProcessor()
+        self.rate_limit_handler = RateLimitHandler()
+        self.setup_api_keys(openai_api_key)
+        self.setup_rate_limits()
+        self.setup_api_urls()
+        
+        # Initialize cache
+        self.cache = {}
+        self.cache_expiry = {}
+        
+        self.logger.info("InvestorSearchTool initialized successfully")
+    
+    def __del__(self):
+        """Cleanup when the instance is destroyed"""
+        if hasattr(self, 'webdriver_manager'):
+            self.webdriver_manager.quit_driver()
+    
+    def setup_api_keys(self, openai_api_key: Optional[str] = None):
+        """Set up and validate API keys"""
+        # OpenAI API Key
+        self.openai_api_key = openai_api_key or os.getenv('OPENAI_API_KEY')
+        if not self.openai_api_key:
+            raise APIKeyError("OpenAI API key is required")
+        openai.api_key = self.openai_api_key
+        
+        # PitchBook API Key
+        self.pitchbook_api_key = os.getenv('PITCHBOOK_API_KEY')
+        if not self.pitchbook_api_key:
+            logger.warning("PitchBook API key not found. Falling back to web scraping.")
+            
+        # Owler API Key
+        self.owler_api_key = os.getenv('OWLER_API_KEY')
+        if not self.owler_api_key:
+            logger.warning("Owler API key not found. Falling back to web scraping.")
+            
+        # Clearbit API Key
+        self.clearbit_api_key = os.getenv('CLEARBIT_API_KEY')
+        if not self.clearbit_api_key:
+            logger.warning("Clearbit API key not found. Falling back to web scraping.")
+            
+        # CB Insights API Key
+        self.cbinsights_api_key = os.getenv('CBINSIGHTS_API_KEY')
+        if not self.cbinsights_api_key:
+            logger.warning("CB Insights API key not found. Falling back to web scraping.")
+    
+    def setup_rate_limits(self):
+        """Set up rate limiting configurations"""
+        self.rate_limits = scraping_config.RATE_LIMITS
+        
+    def setup_api_urls(self):
+        """Set up API URLs from configuration"""
+        self.api_urls = {
+            'pitchbook': 'https://api.pitchbook.com/v1',
+            'owler': 'https://api.owler.com/v1',
+            'clearbit': 'https://api.clearbit.com/v2',
+            'cbinsights': 'https://api.cbinsights.com/v1'
+        }
+        
+        self.api_endpoints = {
+            'pitchbook': {
+                'investors': '/investors/search',
+                'company': '/companies',
+                'deals': '/deals'
+            },
+            'owler': {
+                'company': '/companies',
+                'competitors': '/competitors',
+                'funding': '/funding'
+            },
+            'clearbit': {
+                'company': '/companies/find',
+                'prospector': '/people/search',
+                'risk': '/risk'
+            },
+            'cbinsights': {
+                'investors': '/investors',
+                'companies': '/companies',
+                'trends': '/market-trends'
+            }
+        }
+    
+    def get_api_headers(self, source: str) -> Dict:
+        """Get API headers for the specified source"""
+        headers = {
+            'User-Agent': self.ua.random,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+        
+        if source == 'pitchbook' and self.pitchbook_api_key:
+            headers['X-PB-Key'] = self.pitchbook_api_key
+        elif source == 'owler' and self.owler_api_key:
+            headers['Authorization'] = f'Bearer {self.owler_api_key}'
+        elif source == 'clearbit' and self.clearbit_api_key:
+            headers['Authorization'] = f'Bearer {self.clearbit_api_key}'
+        elif source == 'cbinsights' and self.cbinsights_api_key:
+            headers['X-CB-Key'] = self.cbinsights_api_key
+            
+        return headers
+    
+    @handle_api_errors
+    def get_investor_data(self, search_terms: List[str]) -> pd.DataFrame:
+        """Get investor data with comprehensive error handling"""
+        investors_data = []
+        errors = []
+        
+        # Define source priority and fallback order
+        sources = ['pitchbook', 'cbinsights', 'owler', 'clearbit']
+        
+        for source in sources:
+            try:
+                # Try API first if available
+                if getattr(self, f'{source}_api_key'):
+                    logger.info(f"Attempting to use {source} API")
+                    try:
+                        api_data = self.get_api_data(source, search_terms)
+                        if api_data:
+                            investors_data.extend(api_data)
+                            continue
+                    except (APIKeyError, RateLimitError) as e:
+                        logger.warning(f"API error for {source}, falling back to scraping: {str(e)}")
+                    except Exception as e:
+                        logger.error(f"Unexpected API error for {source}: {str(e)}")
+                        errors.append(f"{source} API: {str(e)}")
+                
+                # Fall back to web scraping
+                logger.info(f"Falling back to web scraping for {source}")
+                try:
+                    scraped_data = self.get_scraped_data(source, search_terms)
+                    if scraped_data:
+                        investors_data.extend(scraped_data)
+                except ScrapingError as e:
+                    logger.error(f"Scraping error for {source}: {str(e)}")
+                    errors.append(f"{source} scraping: {str(e)}")
+                
+            except Exception as e:
+                logger.error(f"Error processing {source}: {str(e)}")
+                errors.append(f"{source}: {str(e)}")
+                continue
+        
+        if not investors_data and errors:
+            raise Exception(f"Failed to get data from any source. Errors: {'; '.join(errors)}")
+        
+        try:
+            # Process and clean the data
+            processed_data = self.data_processor.process_investor_data(investors_data)
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(processed_data)
+            
+            # Additional DataFrame processing
+            if not df.empty:
+                # Sort by investment_count (if available)
+                if 'investment_count' in df.columns:
+                    df = df.sort_values('investment_count', ascending=False)
+                
+                # Convert lists to strings for better display
+                list_columns = ['investment_stages', 'investment_sectors']
+                for col in list_columns:
+                    if col in df.columns:
+                        df[col] = df[col].apply(lambda x: ', '.join(x) if x else '')
+            
+            return df
+            
+        except Exception as e:
+            raise DataValidationError(f"Error processing investor data: {str(e)}")
+    
+    def get_source_url(self, source: str, search_terms: List[str]) -> str:
+        """Generate source-specific URL with error handling"""
+        base_urls = {
+            'pitchbook': 'https://my.pitchbook.com/search',
+            'owler': 'https://www.owler.com/search',
+            'clearbit': 'https://dashboard.clearbit.com/search',
+            'cbinsights': 'https://www.cbinsights.com/search'
+        }
+        
+        try:
+            base_url = base_urls[source]
+            if not search_terms:
+                return base_url
+            
+            search_query = '+'.join(search_terms)
+            return f"{base_url}?q={search_query}"
+            
+        except KeyError:
+            raise ValueError(f"Invalid source: {source}")
+        except Exception as e:
+            raise ValueError(f"Error generating URL for {source}: {str(e)}")
+
+    @handle_api_errors
+    def get_api_data(self, source: str, search_terms: List[str]) -> List[Dict]:
+        """Get investor data from specified API source"""
+        if not getattr(self, f'{source}_api_key'):
+            raise APIKeyError(f"No API key available for {source}")
+        
+        endpoint = self.api_endpoints[source]['investors']
+        url = f"{self.api_urls[source]}{endpoint}"
+        headers = self.get_api_headers(source)
+        
+        # Prepare search parameters based on source
+        params = self._get_source_specific_params(source, search_terms)
+        
+        try:
+            response = requests.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=30
+            )
+            
+            if response.status_code in api_config.SUCCESS_CODES:
+                return self._parse_api_response(source, response.json())
+            elif response.status_code in api_config.ERROR_CODES['AUTH_ERROR']:
+                raise APIKeyError(f"Invalid API key for {source}")
+            elif response.status_code in api_config.ERROR_CODES['RATE_LIMIT']:
+                raise RateLimitError(f"Rate limit exceeded for {source}")
+            elif response.status_code in api_config.ERROR_CODES['SERVER_ERROR']:
+                raise TemporaryError(f"Server error from {source}")
+            
+            response.raise_for_status()
+            
+        except requests.exceptions.Timeout:
+            raise TemporaryError(f"Request to {source} timed out")
+        except requests.exceptions.RequestException as e:
+            raise TemporaryError(f"Request to {source} failed: {str(e)}")
+    
+    def _get_source_specific_params(self, source: str, search_terms: List[str]) -> Dict:
+        """Get source-specific API parameters"""
+        base_params = api_config.DEFAULT_PARAMS[source].copy()
+        
+        if source == 'pitchbook':
+            return {
+                **base_params,
+                'query': ' '.join(search_terms),
+                'type': 'investor'
+            }
+        elif source == 'cbinsights':
+            return {
+                **base_params,
+                'q': ' '.join(search_terms),
+                'type': 'investors'
+            }
+        elif source == 'owler':
+            return {
+                **base_params,
+                'search': ' '.join(search_terms),
+                'category': 'investors'
+            }
+        elif source == 'clearbit':
+            return {
+                **base_params,
+                'query': ' '.join(search_terms),
+                'type': 'investor'
+            }
+        else:
+            raise ValueError(f"Invalid source: {source}")
+    
+    def _parse_api_response(self, source: str, response_data: Dict) -> List[Dict]:
+        """Parse API response based on source format"""
+        investors = []
+        
+        try:
+            if source == 'pitchbook':
+                for item in response_data.get('investors', []):
+                    investor = {
+                        'source': 'pitchbook',
+                        'name': item.get('name', ''),
+                        'type': item.get('investorType', ''),
+                        'location': f"{item.get('city', '')}, {item.get('country', '')}",
+                        'investments': str(item.get('totalInvestments', 0)),
+                        'profile_url': f"https://my.pitchbook.com/profile/{item.get('id')}"
+                    }
+                    investors.append(investor)
+                    
+            elif source == 'cbinsights':
+                for item in response_data.get('data', []):
+                    investor = {
+                        'source': 'cbinsights',
+                        'name': item.get('name', ''),
+                        'type': item.get('type', ''),
+                        'location': item.get('location', ''),
+                        'investments': str(item.get('numInvestments', 0)),
+                        'profile_url': f"https://www.cbinsights.com/investor/{item.get('slug')}"
+                    }
+                    investors.append(investor)
+                    
+            elif source == 'owler':
+                for item in response_data.get('companies', []):
+                    investor = {
+                        'source': 'owler',
+                        'name': item.get('name', ''),
+                        'type': item.get('category', ''),
+                        'location': item.get('location', {}).get('formatted', ''),
+                        'investments': str(item.get('investments', {}).get('count', 0)),
+                        'profile_url': f"https://www.owler.com/company/{item.get('slug')}"
+                    }
+                    investors.append(investor)
+                    
+            elif source == 'clearbit':
+                for item in response_data.get('results', []):
+                    investor = {
+                        'source': 'clearbit',
+                        'name': item.get('name', ''),
+                        'type': item.get('type', ''),
+                        'location': f"{item.get('geo', {}).get('city', '')}, {item.get('geo', {}).get('country', '')}",
+                        'investments': str(item.get('metrics', {}).get('investments', 0)),
+                        'profile_url': item.get('domain', '')
+                    }
+                    investors.append(investor)
+                    
+        except Exception as e:
+            logger.error(f"Error parsing {source} API response: {str(e)}")
+            raise DataValidationError(f"Failed to parse {source} response: {str(e)}")
+        
+        return investors
+
+    @handle_api_errors
+    def get_scraped_data(self, source: str, search_terms: List[str]) -> List[Dict]:
+        """Get investor data by web scraping with comprehensive error handling"""
+        if not self.webdriver_manager.driver:
+            self.webdriver_manager.setup_chrome_driver()
+            
+        url = self.get_source_url(source, search_terms)
+        investors = []
+        
+        try:
+            self.logger.info(f"Navigating to {url}")
+            if not self.webdriver_manager.safe_get(url):
+                raise ScrapingError(f"Failed to load {source} URL")
+            
+            # Wait for page load
+            self.logger.info("Waiting for page to load...")
+            time.sleep(random.uniform(3, 5))  # Initial page load delay
+            
+            # Get source-specific selectors
+            selectors = getattr(scraping_selectors, source.upper())
+            self.logger.info(f"Using selectors for {source}: {selectors}")
+            
+            # Wait for investor list container with multiple attempts
+            container = None
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                try:
+                    self.logger.info(f"Attempt {attempt + 1} to find container using {selectors['wait_for']}")
+                    container = self.webdriver_manager.wait_for_element(
+                        selectors['wait_for'],
+                        timeout=15  # Increased timeout
+                    )
+                    if container:
+                        break
+                    time.sleep(random.uniform(2, 4))  # Delay between attempts
+                except Exception as e:
+                    self.logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                    if attempt < max_attempts - 1:
+                        continue
+                    raise ScrapingError(f"Failed to find container after {max_attempts} attempts")
+            
+            if not container:
+                raise ScrapingError(f"Could not find investor list container for {source}")
+            
+            # Extract investor elements
+            self.logger.info(f"Looking for investor cards using selector: {selectors['investor_cards']}")
+            investor_elements = self.webdriver_manager.driver.find_elements(
+                By.CSS_SELECTOR, 
+                selectors['investor_cards']
+            )
+            
+            self.logger.info(f"Found {len(investor_elements)} investor elements")
+            
+            for i, element in enumerate(investor_elements[:scraping_config.MAX_INVESTORS_PER_SOURCE]):
+                try:
+                    self.logger.info(f"Processing investor {i + 1}")
+                    investor = self._extract_investor_data(element, source, selectors)
+                    if investor:
+                        investors.append(investor)
+                        self.logger.info(f"Successfully extracted data for investor {i + 1}")
+                    else:
+                        self.logger.warning(f"No data extracted for investor {i + 1}")
+                except Exception as e:
+                    self.logger.warning(f"Error extracting investor {i + 1} data: {str(e)}")
+                    continue
+                
+                # Random delay between processing investors
+                time.sleep(random.uniform(0.5, 1.5))
+            
+            self.logger.info(f"Successfully scraped {len(investors)} investors from {source}")
+            
+        except WebDriverException as e:
+            raise ScrapingError(f"WebDriver error for {source}: {str(e)}")
+        except Exception as e:
+            raise ScrapingError(f"Error scraping {source}: {str(e)}")
+        
+        return investors
+    
+    def _extract_investor_data(self, element: WebElement, source: str, selectors: Dict) -> Optional[Dict]:
+        """Extract investor data from web element based on source"""
+        try:
+            if source == 'pitchbook':
+                return self._extract_pitchbook_investor(element, selectors)
+            elif source == 'cbinsights':
+                return self._extract_cbinsights_investor(element, selectors)
+            elif source == 'owler':
+                return self._extract_owler_investor(element, selectors)
+            elif source == 'clearbit':
+                return self._extract_clearbit_investor(element, selectors)
+            else:
+                raise ValueError(f"Invalid source: {source}")
+        except Exception as e:
+            logger.warning(f"Error extracting {source} investor: {str(e)}")
+            return None
+    
+    def _extract_pitchbook_investor(self, element: WebElement, selectors: Dict) -> Dict:
+        """Extract investor data from PitchBook"""
+        name = element.find_element(By.CSS_SELECTOR, selectors['name']).text.strip()
+        type_elem = element.find_element(By.CSS_SELECTOR, selectors['type'])
+        location_elem = element.find_element(By.CSS_SELECTOR, selectors['location'])
+        investments_elem = element.find_element(By.CSS_SELECTOR, selectors['investments'])
+        profile_url = element.find_element(By.CSS_SELECTOR, selectors['profile_link']).get_attribute('href')
+        
+        return {
+            'source': 'pitchbook',
+            'name': name,
+            'type': type_elem.text.strip(),
+            'location': location_elem.text.strip(),
+            'investments': investments_elem.text.strip(),
+            'profile_url': profile_url
+        }
+    
+    def _extract_cbinsights_investor(self, element: WebElement, selectors: Dict) -> Dict:
+        """Extract investor data from CB Insights"""
+        name = element.find_element(By.CSS_SELECTOR, selectors['name']).text.strip()
+        type_elem = element.find_element(By.CSS_SELECTOR, selectors['type'])
+        location_elem = element.find_element(By.CSS_SELECTOR, selectors['location'])
+        investments_elem = element.find_element(By.CSS_SELECTOR, selectors['investments'])
+        profile_url = element.find_element(By.CSS_SELECTOR, selectors['profile_link']).get_attribute('href')
+        
+        return {
+            'source': 'cbinsights',
+            'name': name,
+            'type': type_elem.text.strip(),
+            'location': location_elem.text.strip(),
+            'investments': investments_elem.text.strip(),
+            'profile_url': profile_url
+        }
+    
+    def _extract_owler_investor(self, element: WebElement, selectors: Dict) -> Dict:
+        """Extract investor data from Owler"""
+        name = element.find_element(By.CSS_SELECTOR, selectors['name']).text.strip()
+        type_elem = element.find_element(By.CSS_SELECTOR, selectors['type'])
+        location_elem = element.find_element(By.CSS_SELECTOR, selectors['location'])
+        investments_elem = element.find_element(By.CSS_SELECTOR, selectors['investments'])
+        profile_url = element.find_element(By.CSS_SELECTOR, selectors['profile_link']).get_attribute('href')
+        
+        return {
+            'source': 'owler',
+            'name': name,
+            'type': type_elem.text.strip(),
+            'location': location_elem.text.strip(),
+            'investments': investments_elem.text.strip(),
+            'profile_url': profile_url
+        }
+    
+    def _extract_clearbit_investor(self, element: WebElement, selectors: Dict) -> Dict:
+        """Extract investor data from Clearbit"""
+        name = element.find_element(By.CSS_SELECTOR, selectors['name']).text.strip()
+        type_elem = element.find_element(By.CSS_SELECTOR, selectors['type'])
+        location_elem = element.find_element(By.CSS_SELECTOR, selectors['location'])
+        investments_elem = element.find_element(By.CSS_SELECTOR, selectors['investments'])
+        profile_url = element.find_element(By.CSS_SELECTOR, selectors['profile_link']).get_attribute('href')
+        
+        return {
+            'source': 'clearbit',
+            'name': name,
+            'type': type_elem.text.strip(),
+            'location': location_elem.text.strip(),
+            'investments': investments_elem.text.strip(),
+            'profile_url': profile_url
+        }
+
+class OutputFormatter:
+    """Utility class for formatting output values"""
+    
+    @staticmethod
+    def format_market_size(size: float) -> str:
+        """Format market size in billions or millions"""
+        if size >= 1_000_000_000:
+            return f"${size/1_000_000_000:.1f}B"
+        elif size >= 1_000_000:
+            return f"${size/1_000_000:.1f}M"
+        else:
+            return f"${size:,.0f}"
+
+def generate_pitch_content(company_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate AI-powered pitch content based on company data"""
+    try:
+        # Generate elevator pitch
+        elevator_pitch = f"{company_data['name']} is a {company_data['stage']} {company_data['industry']} company "
+        elevator_pitch += f"that {company_data['product']['uvp']}. "
+        elevator_pitch += f"Based in {company_data['location']}, we're targeting a "
+        elevator_pitch += f"${company_data['product']['tam']:,.0f} market opportunity."
+        
+        # Generate key highlights
+        highlights = [
+            f"Founded in {company_data['founded_year']} with {company_data['team']['total_employees']} employees",
+            f"{company_data['traction']['users']} active users with {company_data['traction']['growth']}% YoY growth",
+            f"${company_data['traction']['revenue']:,.0f} annual revenue with {company_data['traction']['arr']:,.0f} ARR",
+            f"Strong unit economics: LTV ${company_data['business']['ltv']:,.0f} / CAC ${company_data['business']['cac']:,.0f}"
+        ]
+        
+        # Generate market opportunity
+        market_opportunity = {
+            "description": f"Our solution addresses a critical need in the {company_data['industry']} sector. "
+                         f"With a {company_data['product']['target_market']}, we're well-positioned to capture "
+                         f"a significant share of the market.",
+            "total_size": company_data['product']['tam']
+        }
+        
+        # Generate use of funds
+        use_of_funds = {
+            "Product Development": 0.40,
+            "Sales & Marketing": 0.30,
+            "Team Expansion": 0.20,
+            "Operations": 0.10
+        }
+        
+        return {
+            "elevator_pitch": elevator_pitch,
+            "highlights": highlights,
+            "market_opportunity": market_opportunity,
+            "use_of_funds": use_of_funds
+        }
+    except Exception as e:
+        logger.error(f"Error generating pitch content: {str(e)}")
+        raise
+
+async def main():
+    """Main application function"""
+    st.title("AI-Powered Investor Search & Pitch Generator")
+    
+    # Initialize database
+    db = Database()
+    
+    # Create form for company information
+    with st.form("company_info"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            company_name = st.text_input("Company Name*", help="Your company's legal name")
+            company_website = st.text_input("Company Website", help="Your company's website URL")
+            founded_year = st.number_input("Founded Year", min_value=1900, max_value=datetime.now().year, value=datetime.now().year)
+            hq_location = st.text_input("Headquarters Location", help="City, Country")
+        
+        with col2:
+            industry = st.selectbox(
+                "Primary Industry*",
+                enrichment_config.INVESTMENT_SECTORS,
+                help="Select your primary industry"
+            )
+            sub_industry = st.text_input("Sub-industry/Category", help="More specific industry category")
+            stage = st.selectbox(
+                "Company Stage*",
+                enrichment_config.INVESTMENT_STAGES,
+                help="Current stage of your company"
+            )
+        
+        # Funding Information
+        st.subheader("Funding Information")
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            total_funding = st.number_input(
+                "Total Funding Raised to Date ($)",
+                min_value=0,
+                help="Total amount raised so far"
+            )
+            current_target = st.number_input(
+                "Current Funding Target ($)",
+                min_value=0,
+                help="Amount you're looking to raise"
+            )
+        
+        with col4:
+            burn_rate = st.number_input(
+                "Monthly Burn Rate ($)",
+                min_value=0,
+                help="Average monthly expenses"
+            )
+            runway = st.number_input(
+                "Current Runway (months)",
+                min_value=0,
+                help="Months of runway remaining"
+            )
+        
+        # Traction Metrics
+        st.subheader("Traction Metrics")
+        col5, col6 = st.columns(2)
+        
+        with col5:
+            revenue = st.number_input(
+                "Current Annual Revenue ($)",
+                min_value=0,
+                help="Annual revenue run rate"
+            )
+            yoy_growth = st.number_input(
+                "YoY Revenue Growth (%)",
+                min_value=0,
+                max_value=1000,
+                help="Year-over-year revenue growth"
+            )
+        
+        with col6:
+            users = st.number_input(
+                "Number of Users/Customers",
+                min_value=0,
+                help="Total active users or customers"
+            )
+            arr = st.number_input(
+                "Annual Recurring Revenue ($)",
+                min_value=0,
+                help="If applicable for subscription businesses"
+            )
+        
+        # Team Information
+        st.subheader("Team Information")
+        col7, col8 = st.columns(2)
+        
+        with col7:
+            total_employees = st.number_input(
+                "Total Number of Employees",
+                min_value=1,
+                help="Current team size"
+            )
+            tech_employees = st.number_input(
+                "Number of Technical Employees",
+                min_value=0,
+                help="Engineers, developers, etc."
+            )
+        
+        with col8:
+            key_team = st.text_area(
+                "Key Team Members and Their Background",
+                help="Brief background of key team members"
+            )
+        
+        # Product and Market
+        st.subheader("Product and Market")
+        product_status = st.selectbox(
+            "Product Status",
+            ["Concept", "MVP", "Beta", "Live", "Growth", "Scaling"],
+            help="Current stage of your product"
+        )
+        
+        col9, col10 = st.columns(2)
+        
+        with col9:
+            target_market = st.text_area(
+                "Target Market Description",
+                help="Describe your target market"
+            )
+            tam = st.number_input(
+                "Total Addressable Market ($)",
+                min_value=0,
+                help="Size of your total addressable market"
+            )
+        
+        with col10:
+            competitors = st.text_area(
+                "Main Competitors",
+                help="List your main competitors"
+            )
+            uvp = st.text_area(
+                "Unique Value Proposition",
+                help="What makes your solution unique"
+            )
+        
+        # Business Model
+        st.subheader("Business Model")
+        col11, col12 = st.columns(2)
+        
+        with col11:
+            business_model = st.selectbox(
+                "Business Model Type",
+                ["SaaS", "Marketplace", "E-commerce", "Hardware", "Consumer App", "Enterprise", "Other"],
+                help="Your primary business model"
+            )
+            revenue_model = st.text_area(
+                "Revenue Model Description",
+                help="How do you make money?"
+            )
+        
+        with col12:
+            sales_cycle = st.number_input(
+                "Average Sales Cycle (days)",
+                min_value=0,
+                help="Length of your sales cycle"
+            )
+            cac = st.number_input(
+                "Customer Acquisition Cost ($)",
+                min_value=0,
+                help="Average cost to acquire a customer"
+            )
+            ltv = st.number_input(
+                "Customer Lifetime Value ($)",
+                min_value=0,
+                help="Average lifetime value of a customer"
+            )
+        
+        # Additional Information
+        st.subheader("Additional Information")
+        additional_info = st.text_area(
+            "Additional Information",
+            help="Patents, partnerships, or other relevant information"
+        )
+        
+        submitted = st.form_submit_button("Generate Investor Matches & Pitch Content")
+        
+        if submitted:
+            if not all([company_name, industry, stage]):
+                st.error("Please fill in all required fields (marked with *)")
+                return
+            
+            # Prepare company data
+            company_data = {
+                "name": company_name,
+                "website": company_website,
+                "founded_year": founded_year,
+                "location": hq_location,
+                "industry": industry,
+                "sub_industry": sub_industry,
+                "stage": stage,
+                "funding": {
+                    "total_raised": total_funding,
+                    "target": current_target,
+                    "burn_rate": burn_rate,
+                    "runway": runway
+                },
+                "traction": {
+                    "revenue": revenue,
+                    "growth": yoy_growth,
+                    "users": users,
+                    "arr": arr
+                },
+                "team": {
+                    "total_employees": total_employees,
+                    "tech_employees": tech_employees,
+                    "key_members": key_team
+                },
+                "product": {
+                    "status": product_status,
+                    "target_market": target_market,
+                    "tam": tam,
+                    "competitors": competitors,
+                    "uvp": uvp
+                },
+                "business": {
+                    "model": business_model,
+                    "revenue_model": revenue_model,
+                    "sales_cycle": sales_cycle,
+                    "cac": cac,
+                    "ltv": ltv
+                },
+                "additional_info": additional_info
+            }
+            
+            with st.spinner("Searching for investors and generating pitch content..."):
+                try:
+                    # Save search to database
+                    search_terms = [industry, stage, business_model]
+                    db.save_search(search_terms, company_data)
+                    
+                    # Get cached results if available
+                    cache_key = f"search_{hash(json.dumps(search_terms))}"
+                    cached_results = db.get_cache(cache_key)
+                    
+                    if cached_results:
+                        investors_df = pd.DataFrame(cached_results)
+                    else:
+                        # Use asyncio to run async code
+                        tool = InvestorSearchTool()
+                        investors_df = await tool.get_investor_data(search_terms)
+                        
+                        if not investors_df.empty:
+                            # Cache the results
+                            db.set_cache(cache_key, investors_df.to_dict('records'))
+                            
+                            # Save investors to database
+                            db.save_investors(investors_df.to_dict('records'))
+                    
+                    if not investors_df.empty:
+                        st.success(f"Found {len(investors_df)} potential investors!")
+                        
+                        # Display results
+                        st.subheader("Matched Investors")
+                        st.dataframe(
+                            investors_df[[
+                                'name', 'type', 'location', 'investments',
+                                'investment_stages', 'investment_sectors'
+                            ]]
+                        )
+                        
+                        # Generate and display pitch content
+                        pitch_content = generate_pitch_content(company_data)
+                        
+                        st.subheader("AI-Generated Pitch Content")
+                        
+                        # Display elevator pitch
+                        st.markdown("### Elevator Pitch")
+                        st.write(pitch_content['elevator_pitch'])
+                        
+                        # Display highlights
+                        st.markdown("### Key Highlights")
+                        for highlight in pitch_content['highlights']:
+                            st.markdown(f"- {highlight}")
+                        
+                        # Display market opportunity
+                        st.markdown("### Market Opportunity")
+                        st.write(pitch_content['market_opportunity']['description'])
+                        st.metric(
+                            "Total Addressable Market",
+                            OutputFormatter.format_market_size(pitch_content['market_opportunity']['total_size'])
+                        )
+                        
+                        # Display use of funds
+                        st.markdown("### Use of Funds")
+                        fund_data = pitch_content['use_of_funds']
+                        fig = px.pie(
+                            values=list(fund_data.values()),
+                            names=list(fund_data.keys()),
+                            title="Funding Allocation"
+                        )
+                        st.plotly_chart(fig)
+                        
+                        # Download full report
+                        report_json = json.dumps({
+                            'company_data': company_data,
+                            'matched_investors': investors_df.to_dict('records'),
+                            'pitch_content': pitch_content
+                        }, indent=2)
+                        
+                        st.download_button(
+                            "Download Full Report",
+                            report_json,
+                            file_name=f"{company_name}_investor_report.json",
+                            mime="application/json"
+                        )
+                        
+                    else:
+                        st.warning("No investors found matching your criteria.")
+                        
+                except Exception as e:
+                    st.error(f"An error occurred: {str(e)}")
+                    logger.error(f"Error in main app: {str(e)}", exc_info=True)
+    
+    # Display recent searches
+    with st.expander("Recent Searches"):
+        recent_searches = db.get_recent_searches()
+        if recent_searches:
+            for search in recent_searches:
+                st.write(f"Search Terms: {', '.join(search['search_terms'])}")
+                st.write(f"Date: {search['created_at']}")
+                st.divider()
+        else:
+            st.write("No recent searches found.")
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        st.error(f"Application Error: {str(e)}")
+        logger.error("Application failed to start", exc_info=True)

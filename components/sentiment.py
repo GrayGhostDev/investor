@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import trafilatura
 import openai
@@ -19,17 +20,17 @@ class MarketSentimentTracker:
         self.sentiment_cache = {}
         self.last_update = None
 
-    def fetch_market_news(self, sources: List[str]) -> List[str]:
+    def fetch_market_news(self, sources: List[str]) -> List[Dict]:
         """Fetch recent market news from specified sources"""
         news_items = []
-        
+
         # Example sources with venture capital and startup news
         news_sources = {
             "techcrunch": "https://techcrunch.com/venture/",
             "venturebeat": "https://venturebeat.com/venture/",
             "reuters_vc": "https://www.reuters.com/markets/venture-capital/"
         }
-        
+
         for source_name, url in news_sources.items():
             if source_name in sources:
                 try:
@@ -88,10 +89,11 @@ class MarketSentimentTracker:
         confidence = []
 
         for data in sentiment_data:
-            dates.append(data['timestamp'])
-            scores.append(data['sentiment_score'])
-            confidence.append(data['confidence_level'])
+            dates.append(data.get('timestamp'))
+            scores.append(data.get('sentiment_score'))
+            confidence.append(data.get('confidence_level'))
 
+        # Create subplot with secondary y-axis
         fig = make_subplots(specs=[[{"secondary_y": True}]])
 
         # Add sentiment score line
@@ -108,11 +110,21 @@ class MarketSentimentTracker:
             secondary_y=True
         )
 
+        # Update layout
         fig.update_layout(
             title="Market Sentiment Timeline",
             xaxis_title="Time",
             yaxis_title="Sentiment Score (-1 to 1)",
-            yaxis2_title="Confidence Level (0-100)"
+            yaxis2_title="Confidence Level (0-100)",
+            height=400,
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
         )
 
         return fig
@@ -121,10 +133,10 @@ class MarketSentimentTracker:
         """Create sector-wise sentiment visualization"""
         sectors = {}
         for data in sentiment_data:
-            for sector in data['sectors']:
+            for sector in data.get('sectors', []):
                 if sector not in sectors:
                     sectors[sector] = []
-                sectors[sector].append(data['sentiment_score'])
+                sectors[sector].append(data.get('sentiment_score', 0))
 
         sector_avg = {
             sector: sum(scores) / len(scores)
@@ -141,7 +153,8 @@ class MarketSentimentTracker:
             title="Sector-wise Sentiment Analysis",
             xaxis_title="Sectors",
             yaxis_title="Average Sentiment Score",
-            yaxis=dict(range=[-1, 1])
+            yaxis=dict(range=[-1, 1]),
+            height=400
         )
 
         return fig
@@ -188,15 +201,15 @@ def render_sentiment_tracker():
         (current_time - st.session_state.last_update).total_seconds() > update_frequency * 60
     )
 
-    if should_update:
+    if should_update and selected_sources:
         with st.spinner("Fetching and analyzing market sentiment..."):
             # Fetch and analyze news
             news_items = tracker.fetch_market_news(selected_sources)
-            
+
             for item in news_items:
-                sentiment = tracker.analyze_sentiment(item['content'])
+                sentiment = tracker.analyze_sentiment(item.get('content', ''))
                 if sentiment:
-                    sentiment['timestamp'] = item['timestamp']
+                    sentiment['timestamp'] = item.get('timestamp')
                     st.session_state.sentiment_data.append(sentiment)
 
             st.session_state.last_update = current_time
@@ -205,19 +218,19 @@ def render_sentiment_tracker():
     if st.session_state.sentiment_data:
         # Current sentiment metrics
         latest = st.session_state.sentiment_data[-1]
-        
+
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric(
                 "Current Sentiment",
-                f"{latest['sentiment_score']:.2f}",
-                delta=f"{latest['sentiment_score'] - st.session_state.sentiment_data[-2]['sentiment_score']:.2f}" 
+                f"{latest.get('sentiment_score', 0):.2f}",
+                delta=f"{latest.get('sentiment_score', 0) - st.session_state.sentiment_data[-2].get('sentiment_score', 0):.2f}" 
                 if len(st.session_state.sentiment_data) > 1 else None
             )
         with col2:
-            st.metric("Market Confidence", f"{latest['confidence_level']}%")
+            st.metric("Market Confidence", f"{latest.get('confidence_level', 0)}%")
         with col3:
-            st.metric("Active Sectors", len(latest['sectors']))
+            st.metric("Active Sectors", len(latest.get('sectors', [])))
 
         # Show sentiment timeline
         st.plotly_chart(
@@ -233,12 +246,12 @@ def render_sentiment_tracker():
 
         # Display key insights
         st.subheader("Current Market Insights")
-        for insight in latest['insights']:
+        for insight in latest.get('insights', []):
             st.markdown(f"• {insight}")
 
         # Show trending topics
         st.subheader("Key Market Trends")
-        for trend in latest['trends']:
+        for trend in latest.get('trends', []):
             st.markdown(f"• {trend}")
 
     else:

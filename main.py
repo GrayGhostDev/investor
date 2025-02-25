@@ -4,6 +4,7 @@ from components.search import render_search_section
 from components.dashboard import render_dashboard
 from components.visualizations import render_visualizations
 from components.pitch_deck import render_pitch_deck_generator
+from components.comparison import render_comparison_section
 from utils.styling import load_css, set_page_config
 
 def main():
@@ -25,7 +26,7 @@ def main():
         st.session_state.error = None
 
     # Create tabs for different sections
-    tabs = st.tabs(["Search", "Dashboard", "Analysis", "Pitch Deck"])
+    tabs = st.tabs(["Search", "Dashboard", "Analysis", "Pitch Deck", "Compare"])
 
     with tabs[0]:
         render_search_section()
@@ -45,6 +46,12 @@ def main():
     with tabs[3]:
         if st.session_state.search_results is not None:
             render_pitch_deck_generator(st.session_state.search_results)
+        else:
+            st.info("Use the search tab to find investors first")
+
+    with tabs[4]:
+        if st.session_state.search_results is not None:
+            render_comparison_section(st.session_state.search_results)
         else:
             st.info("Use the search tab to find investors first")
 

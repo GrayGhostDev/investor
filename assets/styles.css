@@ -1,0 +1,80 @@
+/* Main styles */
+.stApp {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Header styles */
+.stHeader {
+    background-color: #ffffff;
+    padding: 1rem 0;
+}
+
+/* Metric card styles */
+.stMetric {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Chart container styles */
+.stPlotlyChart {
+    background-color: #ffffff;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Data table styles */
+.stDataFrame {
+    background-color: #ffffff;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Loading animation */
+.stSpinner {
+    text-align: center;
+    max-width: 50%;
+    margin: 0 auto;
+}
+
+/* Button styles */
+.stButton>button {
+    background-color: #0066cc;
+    color: white;
+    border-radius: 0.3rem;
+    padding: 0.5rem 1rem;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.stButton>button:hover {
+    background-color: #0052a3;
+    border: none;
+}
+
+/* Tab styles */
+.stTab {
+    background-color: #ffffff;
+    border-radius: 0.5rem 0.5rem 0 0;
+}
+
+/* Alert/Info styles */
+.stAlert {
+    border-radius: 0.5rem;
+    margin: 1rem 0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .stApp {
+        padding: 0 1rem;
+    }
+    
+    .stMetric {
+        margin-bottom: 1rem;
+    }
+}

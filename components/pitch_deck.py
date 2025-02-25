@@ -8,10 +8,10 @@ from datetime import datetime
 
 class PitchDeckGenerator:
     """Generate AI-powered pitch deck content and suggestions"""
-    
+
     def __init__(self):
         self.openai_api_key = os.getenv('OPENAI_API_KEY')
-        openai.api_key = self.openai_api_key
+        self.client = openai.OpenAI(api_key=self.openai_api_key)
 
     def generate_content_suggestions(self, investor_data: pd.DataFrame, focus_areas: List[str]) -> Dict:
         """Generate content suggestions based on investor data"""
@@ -40,13 +40,14 @@ class PitchDeckGenerator:
             executive_summary, value_props, market_opportunity, competitive_advantages, investment_ask
             """
 
-            # Get AI suggestions
-            response = openai.ChatCompletion.create(
+            # Get AI suggestions using the new API format
+            response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are an expert pitch deck consultant."},
                     {"role": "user", "content": prompt}
-                ]
+                ],
+                response_format={"type": "json_object"}
             )
 
             # Parse and return suggestions
@@ -74,12 +75,13 @@ class PitchDeckGenerator:
             colors, layout, visuals, typography
             """
 
-            response = openai.ChatCompletion.create(
+            response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are an expert presentation designer."},
                     {"role": "user", "content": prompt}
-                ]
+                ],
+                response_format={"type": "json_object"}
             )
 
             design_suggestions = json.loads(response.choices[0].message.content)
@@ -92,7 +94,7 @@ class PitchDeckGenerator:
 def render_pitch_deck_generator(df: pd.DataFrame):
     """Render the pitch deck generator interface"""
     st.header("AI-Powered Pitch Deck Generator")
-    
+
     # Initialize generator
     generator = PitchDeckGenerator()
 
@@ -138,56 +140,56 @@ def render_pitch_deck_generator(df: pd.DataFrame):
         with st.spinner("Generating pitch deck content..."):
             # Generate content suggestions
             content = generator.generate_content_suggestions(df, focus_areas)
-            
+
             if content:
                 # Generate design suggestions
                 design = generator.generate_design_suggestions(content)
-                
+
                 if design:
                     # Display suggestions
                     st.success("✨ Pitch deck suggestions generated successfully!")
-                    
+
                     # Content suggestions
                     st.subheader("Content Suggestions")
-                    
+
                     st.write("##### Executive Summary")
                     st.write(content["executive_summary"])
-                    
+
                     st.write("##### Key Value Propositions")
                     for prop in content["value_props"]:
                         st.markdown(f"• {prop}")
-                    
+
                     st.write("##### Market Opportunity")
                     for point in content["market_opportunity"]:
                         st.markdown(f"• {point}")
-                    
+
                     st.write("##### Competitive Advantages")
                     for adv in content["competitive_advantages"]:
                         st.markdown(f"• {adv}")
-                    
+
                     st.write("##### Investment Ask")
                     st.write(content["investment_ask"])
-                    
+
                     # Design suggestions
                     st.subheader("Design Suggestions")
-                    
+
                     col1, col2 = st.columns(2)
-                    
+
                     with col1:
                         st.write("##### Color Scheme")
                         for color in design["colors"]:
                             st.markdown(f"• {color}")
-                        
+
                         st.write("##### Typography")
                         st.write(design["typography"])
-                    
+
                     with col2:
                         st.write("##### Layout Recommendations")
                         st.write(design["layout"])
-                        
+
                         st.write("##### Visual Elements")
                         st.write(design["visuals"])
-                    
+
                     # Export options
                     st.subheader("Export Options")
                     st.info("""
@@ -195,7 +197,7 @@ def render_pitch_deck_generator(df: pd.DataFrame):
                     - PowerPoint
                     - Keynote
                     - Google Slides
-                    
+
                     Copy the content and follow the design suggestions in your preferred tool.
                     """)
     else:

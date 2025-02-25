@@ -16,13 +16,13 @@ def create_investment_distribution(df: pd.DataFrame):
 
 def create_location_map(df: pd.DataFrame):
     """Create location-based visualization"""
-    location_counts = df['location'].value_counts().reset_index()
-    location_counts.columns = ['location', 'count']
-    
+    # First, group by location and count
+    location_counts = df.groupby(['location', 'latitude', 'longitude']).size().reset_index(name='count')
+
     fig = px.scatter_mapbox(
         location_counts,
-        lat=df['latitude'],
-        lon=df['longitude'],
+        lat='latitude',
+        lon='longitude',
         size='count',
         hover_name='location',
         zoom=1,
@@ -34,7 +34,7 @@ def create_location_map(df: pd.DataFrame):
 def create_investment_stages(df: pd.DataFrame):
     """Create investment stages visualization"""
     stages_data = df['investment_stages'].explode().value_counts()
-    
+
     fig = px.bar(
         stages_data,
         title='Investment Stages Distribution',
@@ -49,19 +49,19 @@ def create_investment_stages(df: pd.DataFrame):
 def render_visualizations(df: pd.DataFrame):
     """Render all visualizations"""
     st.header("Investment Analysis")
-    
+
     # Distribution chart
     st.plotly_chart(
         create_investment_distribution(df),
         use_container_width=True
     )
-    
+
     # Location map
     st.plotly_chart(
         create_location_map(df),
         use_container_width=True
     )
-    
+
     # Investment stages
     st.plotly_chart(
         create_investment_stages(df),

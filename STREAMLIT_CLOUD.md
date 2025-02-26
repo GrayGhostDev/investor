@@ -19,6 +19,7 @@ This guide explains how to deploy the Investor Search Platform to Streamlit Clou
    - Select your GitHub repository (GrayGhostDev/investor)
    - Select the branch (main)
    - Set the main file path to `streamlit_app.py`
+   - **Important**: In the "Advanced Settings" section, set the requirements file to `requirements-streamlit.txt` instead of the default `requirements.txt`
    - Click "Deploy"
 
 3. **Configure Secrets**
@@ -35,8 +36,9 @@ This guide explains how to deploy the Investor Search Platform to Streamlit Clou
    - Click "Save"
 
 4. **Verify Dependencies**
-   - Ensure that all required packages are listed in `requirements.txt`
-   - The following packages are essential for the application:
+   - The `requirements-streamlit.txt` file contains only the essential packages with relaxed version constraints
+   - This approach helps avoid dependency conflicts on Streamlit Cloud
+   - The following packages are included:
      - streamlit
      - openai
      - geopy
@@ -45,12 +47,26 @@ This guide explains how to deploy the Investor Search Platform to Streamlit Clou
      - pandas
      - sqlalchemy
      - httpx
+     - scikit-learn
+     - and other essential dependencies
 
 5. **Troubleshooting Common Issues**
-   - **Module Not Found Errors**: If you see "ModuleNotFoundError", check that the package is listed in requirements.txt
-   - **API Key Issues**: Ensure your OpenAI API key is valid and has sufficient credits
-   - **Path Issues**: The application uses relative imports, so ensure the file structure matches the repository
-   - **Database Errors**: If using a custom database, ensure the connection string is correct in secrets
+   - **Module Not Found Errors**: 
+     - If you see "ModuleNotFoundError", check the app logs in Streamlit Cloud
+     - The enhanced error handling in streamlit_app.py will show which modules are missing
+     - You may need to manually add the missing package to requirements-streamlit.txt
+   
+   - **API Key Issues**: 
+     - Ensure your OpenAI API key is valid and has sufficient credits
+     - Check that it's properly set in the Streamlit Cloud secrets
+   
+   - **Path Issues**: 
+     - The application uses relative imports, so ensure the file structure matches the repository
+     - The streamlit_app.py file includes debugging information to help identify path issues
+   
+   - **Database Errors**: 
+     - If using a custom database, ensure the connection string is correct in secrets
+     - The application will fall back to SQLite if no database URL is provided
 
 6. **Monitoring Your App**
    - Use the "Manage app" button in Streamlit Cloud to:
@@ -77,7 +93,8 @@ investor/
 ├── main.py
 ├── streamlit_app.py (entry point for Streamlit Cloud)
 ├── InvestorSearchTool.py
-├── requirements.txt
+├── requirements.txt (full dependencies for local development)
+├── requirements-streamlit.txt (simplified dependencies for Streamlit Cloud)
 └── ... (other files)
 ```
 

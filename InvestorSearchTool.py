@@ -11,8 +11,15 @@ from fake_useragent import UserAgent
 from sqlalchemy import or_, and_, desc, asc
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.expression import func
-from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut, GeocoderUnavailable
+
+# Try to import geopy, but provide a fallback if it's not available
+try:
+    from geopy.geocoders import Nominatim
+    from geopy.exc import GeocoderTimedOut, GeocoderUnavailable
+    GEOPY_AVAILABLE = True
+except ImportError:
+    GEOPY_AVAILABLE = False
+    logging.warning("geopy module not available. Using fallback geocoding.")
 
 # Import local modules
 from scraping_config import RATE_LIMITS
@@ -31,8 +38,17 @@ class InvestorSearchTool:
         self.cache = {}
         self.cache_expiry = {}
         
-        # Initialize geocoder
-        self.geolocator = Nominatim(user_agent="investor_search_app")
+        # Initialize geocoder if geopy is available
+        if GEOPY_AVAILABLE:
+            try:
+                self.geolocator = Nominatim(user_agent="investor_search_app")
+                self.logger.info("Geocoder initialized successfully")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize geocoder: {str(e)}")
+                self.geolocator = None
+        else:
+            self.geolocator = None
+            self.logger.warning("Geocoder not available - using random coordinates")
         
         # Create sample data if database is empty
         self._create_sample_data_if_empty()
@@ -349,46 +365,53 @@ class InvestorSearchTool:
             if location in self.cache and self.cache_expiry.get(location, 0) > time.time():
                 return self.cache[location]
             
-            # Rate limiting
-            time.sleep(1)  # Simple rate limiting for geocoding API
-            
-            # Get coordinates from geocoding API
-            location_data = self.geolocator.geocode(location)
-            
-            if location_data:
-                # Cache the result for 24 hours
-                self.cache[location] = (location_data.latitude, location_data.longitude)
-                self.cache_expiry[location] = time.time() + 86400  # 24 hours
-                return location_data.latitude, location_data.longitude
-            else:
-                # If geocoding fails, use approximate coordinates based on country/region
-                if "USA" in location or "US" in location:
-                    return 37.7749 + random.uniform(-5, 5), -122.4194 + random.uniform(-5, 5)
-                elif "UK" in location:
-                    return 51.5074 + random.uniform(-1, 1), -0.1278 + random.uniform(-1, 1)
-                elif "Germany" in location:
-                    return 52.5200 + random.uniform(-1, 1), 13.4050 + random.uniform(-1, 1)
-                elif "France" in location:
-                    return 48.8566 + random.uniform(-1, 1), 2.3522 + random.uniform(-1, 1)
-                elif "Israel" in location:
-                    return 32.0853 + random.uniform(-1, 1), 34.7818 + random.uniform(-1, 1)
-                elif "Singapore" in location:
-                    return 1.3521 + random.uniform(-0.5, 0.5), 103.8198 + random.uniform(-0.5, 0.5)
-                elif "Japan" in location:
-                    return 35.6762 + random.uniform(-1, 1), 139.6503 + random.uniform(-1, 1)
-                elif "Canada" in location:
-                    return 43.6532 + random.uniform(-2, 2), -79.3832 + random.uniform(-2, 2)
-                elif "Australia" in location:
-                    return -33.8688 + random.uniform(-2, 2), 151.2093 + random.uniform(-2, 2)
-                else:
-                    return random.uniform(-90, 90), random.uniform(-180, 180)
+            # If geopy is available and geocoder is initialized, use it
+            if GEOPY_AVAILABLE and self.geolocator:
+                # Rate limiting
+                time.sleep(1)  # Simple rate limiting for geocoding API
+                
+                try:
+                    # Get coordinates from geocoding API
+                    location_data = self.geolocator.geocode(location)
                     
-        except (GeocoderTimedOut, GeocoderUnavailable) as e:
-            self.logger.warning(f"Geocoding error for {location}: {str(e)}")
-            # Return approximate coordinates
-            return random.uniform(-90, 90), random.uniform(-180, 180)
+                    if location_data:
+                        # Cache the result for 24 hours
+                        self.cache[location] = (location_data.latitude, location_data.longitude)
+                        self.cache_expiry[location] = time.time() + 86400  # 24 hours
+                        return location_data.latitude, location_data.longitude
+                except (GeocoderTimedOut, GeocoderUnavailable) as e:
+                    self.logger.warning(f"Geocoding error for {location}: {str(e)}")
+                except Exception as e:
+                    self.logger.error(f"Error geocoding location {location}: {str(e)}")
+            
+            # Fallback to approximate coordinates based on country/region
+            return self._get_approximate_coordinates(location)
+                    
         except Exception as e:
-            self.logger.error(f"Error geocoding location {location}: {str(e)}")
+            self.logger.error(f"Error in geocoding: {str(e)}")
+            return self._get_approximate_coordinates(location)
+            
+    def _get_approximate_coordinates(self, location: str) -> Tuple[float, float]:
+        """Get approximate coordinates based on location text"""
+        if "USA" in location or "US" in location:
+            return 37.7749 + random.uniform(-5, 5), -122.4194 + random.uniform(-5, 5)
+        elif "UK" in location:
+            return 51.5074 + random.uniform(-1, 1), -0.1278 + random.uniform(-1, 1)
+        elif "Germany" in location:
+            return 52.5200 + random.uniform(-1, 1), 13.4050 + random.uniform(-1, 1)
+        elif "France" in location:
+            return 48.8566 + random.uniform(-1, 1), 2.3522 + random.uniform(-1, 1)
+        elif "Israel" in location:
+            return 32.0853 + random.uniform(-1, 1), 34.7818 + random.uniform(-1, 1)
+        elif "Singapore" in location:
+            return 1.3521 + random.uniform(-0.5, 0.5), 103.8198 + random.uniform(-0.5, 0.5)
+        elif "Japan" in location:
+            return 35.6762 + random.uniform(-1, 1), 139.6503 + random.uniform(-1, 1)
+        elif "Canada" in location:
+            return 43.6532 + random.uniform(-2, 2), -79.3832 + random.uniform(-2, 2)
+        elif "Australia" in location:
+            return -33.8688 + random.uniform(-2, 2), 151.2093 + random.uniform(-2, 2)
+        else:
             return random.uniform(-90, 90), random.uniform(-180, 180)
             
     def _fetch_real_investor_data(self, search_term: str) -> List[Dict]:

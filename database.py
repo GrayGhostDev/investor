@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 # Get database URL from environment
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set")
+    # Use SQLite as a fallback
+    logger.warning("DATABASE_URL environment variable is not set. Using SQLite database.")
+    DATABASE_URL = 'sqlite:///investor_data.db'
 
 # Create database engine
 engine = create_engine(DATABASE_URL)

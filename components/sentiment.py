@@ -10,13 +10,21 @@ import os
 import json
 from typing import List, Dict
 import time
+import random
+import random
 
 class MarketSentimentTracker:
     """Track and analyze real-time market sentiment"""
 
     def __init__(self):
         """Initialize the sentiment tracker"""
-        self.client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        api_key = os.getenv('OPENAI_API_KEY')
+        if api_key:
+            self.client = openai.OpenAI(api_key=api_key)
+            self.api_available = True
+        else:
+            st.warning("OpenAI API key not set. Sentiment analysis will use mock data.")
+            self.api_available = False
         self.sentiment_cache = {}
         self.last_update = None
 
@@ -50,6 +58,10 @@ class MarketSentimentTracker:
         return news_items
 
     def analyze_sentiment(self, text: str) -> Dict:
+        """Analyze sentiment using OpenAI API"""
+        if not self.api_available:
+            return self._generate_mock_sentiment()
+        
         """Analyze sentiment using OpenAI API"""
         try:
             prompt = f"""

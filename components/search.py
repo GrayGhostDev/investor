@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from typing import List, Dict
 from InvestorSearchTool import InvestorSearchTool
+from components.web_scraper import render_web_scraper_section
 
 def initialize_search_tool():
     """Initialize the investor search tool"""
@@ -58,6 +59,9 @@ def render_advanced_filters():
                 value=(0, 50),
                 step=5
             )
+            
+        # Always use real APIs
+        st.info("Using real APIs for accurate location data and investor information based on your search terms.")
 
     return {
         "investment_range": investment_range,
@@ -65,7 +69,8 @@ def render_advanced_filters():
         "sectors": sectors,
         "continents": continents,
         "investment_size": investment_size,
-        "years_active": years_active
+        "years_active": years_active,
+        "use_real_api": True  # Always use real API
     }
 
 def render_search_filters():
@@ -171,18 +176,84 @@ def render_search_section():
                     search_terms=search_terms,
                     filters={
                         "investment_range": filters["investment_range"],
-                        "investment_size": filters["investment_size"],
-                        "years_active": filters["years_active"]
+                        "investment_stages": filters["investment_stages"],
+                        "sectors": filters["sectors"],
+                        "continents": filters["continents"]
                     },
                     sort_by=sort_by,
-                    sort_order=sort_order.lower()
+                    sort_order=sort_order.lower(),
+                    use_real_api=filters.get("use_real_api", True)
                 )
 
                 if not results.empty:
                     st.session_state.search_results = results
                     st.success(f"Found {len(results)} investors matching your criteria")
+                    
+                    # Show a message that real APIs were used
+                    st.info("Results include data from real APIs for enhanced accuracy and up-to-date information.")
+                    
+                    # Display a more detailed results view
+                    st.write("### Investor Results")
+                    
+                    # Create tabs for different views
+                    tab1, tab2 = st.tabs(["List View", "Map View"])
+                    
+                    with tab1:
+                        # Enhanced list view with more details
+                        for i, row in results.iterrows():
+                            with st.expander(f"{row['name']} - {row['type']}"):
+                                col1, col2 = st.columns([2, 1])
+                                
+                                with col1:
+                                    st.write(f"**Location:** {row['location']}")
+                                    st.write(f"**Investments:** {row['investments']}")
+                                    st.write(f"**Investment Stages:** {', '.join(row['investment_stages'])}")
+                                    if 'profile_url' in row and row['profile_url']:
+                                        st.write(f"**Website:** [{row['profile_url']}]({row['profile_url']})")
+                                
+                                with col2:
+                                    # Display a small map for the investor location
+                                    if 'latitude' in row and 'longitude' in row and row['latitude'] and row['longitude']:
+                                        st.write("**Location Map:**")
+                                        location_df = pd.DataFrame({
+                                            'lat': [row['latitude']],
+                                            'lon': [row['longitude']],
+                                            'name': [row['name']]
+                                        })
+                                        st.map(location_df, zoom=4)
+                    
+                    with tab2:
+                        # Map view of all investors
+                        if 'latitude' in results.columns and 'longitude' in results.columns:
+                            map_data = pd.DataFrame({
+                                'lat': results['latitude'],
+                                'lon': results['longitude'],
+                                'name': results['name']
+                            })
+                            st.map(map_data)
+                        else:
+                            st.warning("Location data not available for map view")
+                    
+                    # Remove the button to go to the matching algorithm tab since they're now in the same tab
+                    st.markdown("---")
+                    st.markdown("""
+                    ### Find Your Perfect Investor Match
+                    Use our matching algorithm on the right to find the investors that best match your startup's profile.
+                    Enter your startup details and get personalized investor recommendations.
+                    """)
+                    
+                    # Add a separator before web scraper section
+                    st.markdown("---")
+                    
+                    # Add web scraper section to find additional investors from the web
+                    render_web_scraper_section(search_terms, filters.get("location"))
                 else:
                     st.warning("No investors found matching your criteria")
+                    
+                    # Even if no API results, try web scraping
+                    st.markdown("---")
+                    st.markdown("### Searching the web for alternatives...")
+                    render_web_scraper_section(search_terms, filters.get("location"))
 
             except Exception as e:
                 st.session_state.error = f"Error during search: {str(e)}"

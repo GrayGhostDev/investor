@@ -66,4 +66,9 @@ replit.nix
 poetry.lock
 .upm/
 .config/
-.pythonlibs/
+.pythonlibs/# Backup files
+*.bak
+*.bak[0-9]*
+*.original
+fix_*.py
+create_files.sh

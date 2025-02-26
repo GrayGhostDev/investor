@@ -32,24 +32,43 @@ required_packages = [
     "pandas", 
     "sqlalchemy", 
     "openai", 
-    "geopy", 
     "requests", 
     "beautifulsoup4",
-    "fake_useragent",
+    "fake_useragent"
+]
+
+# Optional packages that have fallbacks
+optional_packages = [
+    "geopy",
     "scikit-learn"
 ]
 
-missing_packages = []
+missing_required_packages = []
+missing_optional_packages = []
+
+# Check required packages
 for package in required_packages:
     try:
         importlib.import_module(package)
     except ImportError:
-        missing_packages.append(package)
+        missing_required_packages.append(package)
 
-if missing_packages:
-    st.error(f"Missing required packages: {', '.join(missing_packages)}")
+# Check optional packages
+for package in optional_packages:
+    try:
+        importlib.import_module(package)
+    except ImportError:
+        missing_optional_packages.append(package)
+
+# Show warnings for missing packages
+if missing_required_packages:
+    st.error(f"Missing required packages: {', '.join(missing_required_packages)}")
     st.info("Please install the missing packages or check your environment.")
     st.stop()
+
+if missing_optional_packages:
+    st.warning(f"Some optional packages are missing: {', '.join(missing_optional_packages)}")
+    st.info("The application will use fallback implementations for these features.")
 
 try:
     # Import the main application
@@ -84,9 +103,39 @@ except Exception as e:
         
         # Try to import specific modules to see where it fails
         st.write("### Module Import Tests")
-        for module in ["geopy", "pandas", "sqlalchemy", "openai", "requests", "bs4", "fake_useragent", "sklearn"]:
+        for module in ["pandas", "sqlalchemy", "openai", "requests", "bs4", "fake_useragent"]:
             try:
                 importlib.import_module(module)
                 st.write(f"✅ {module} imported successfully")
             except ImportError as e:
                 st.write(f"❌ Failed to import {module}: {str(e)}")
+                
+        st.write("### Optional Module Import Tests")
+        for module in ["geopy", "sklearn"]:
+            try:
+                importlib.import_module(module)
+                st.write(f"✅ {module} imported successfully")
+            except ImportError as e:
+                st.write(f"⚠️ Optional module {module} not available: {str(e)}")
+                
+        # Check for specific scikit-learn components
+        if "sklearn" not in missing_optional_packages:
+            st.write("### Scikit-learn Component Tests")
+            try:
+                from sklearn.feature_extraction.text import TfidfVectorizer
+                st.write("✅ TfidfVectorizer imported successfully")
+            except ImportError as e:
+                st.write(f"❌ Failed to import TfidfVectorizer: {str(e)}")
+                
+            try:
+                from sklearn.metrics.pairwise import cosine_similarity
+                st.write("✅ cosine_similarity imported successfully")
+            except ImportError as e:
+                st.write(f"❌ Failed to import cosine_similarity: {str(e)}")
+                
+        # Provide suggestions for fixing the issues
+        st.write("### Suggestions")
+        st.write("If you're seeing import errors, try the following:")
+        st.write("1. Make sure all required packages are installed: `pip install -r requirements-streamlit.txt`")
+        st.write("2. Check that you're using a compatible Python version (3.7-3.10)")
+        st.write("3. If using Streamlit Cloud, make sure to set the requirements file to `requirements-streamlit.txt` in Advanced Settings")

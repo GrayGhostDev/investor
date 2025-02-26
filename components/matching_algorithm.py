@@ -2,8 +2,15 @@ import logging
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+
+# Try to import scikit-learn components, but provide fallbacks if not available
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    logging.warning("scikit-learn modules not available. Using simplified text matching.")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +24,19 @@ class InvestorMatchingAlgorithm:
     def __init__(self):
         """Initialize the investor matching algorithm"""
         self.logger = logging.getLogger("MatchingAlgorithm")
-        self.vectorizer = TfidfVectorizer(stop_words='english')
+        
+        # Initialize vectorizer if scikit-learn is available
+        if SKLEARN_AVAILABLE:
+            try:
+                self.vectorizer = TfidfVectorizer(stop_words='english')
+                self.logger.info("TF-IDF vectorizer initialized successfully")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize TF-IDF vectorizer: {str(e)}")
+                self.vectorizer = None
+        else:
+            self.vectorizer = None
+            self.logger.warning("TF-IDF vectorizer not available - using simplified text matching")
+            
         self.logger.info("InvestorMatchingAlgorithm initialized")
         
     def match_investors(self, 
@@ -178,19 +197,39 @@ class InvestorMatchingAlgorithm:
             
             # Calculate text similarity
             try:
-                # Create a corpus with both texts
-                corpus = [" ".join(startup_sectors), investor_text]
-                
-                # Transform the corpus to TF-IDF features
-                tfidf_matrix = self.vectorizer.fit_transform(corpus)
-                
-                # Calculate cosine similarity
-                similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+                if SKLEARN_AVAILABLE and self.vectorizer:
+                    # Use scikit-learn for TF-IDF similarity
+                    corpus = [" ".join(startup_sectors), investor_text]
+                    tfidf_matrix = self.vectorizer.fit_transform(corpus)
+                    similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+                else:
+                    # Fallback to simple word overlap similarity
+                    similarity = self._calculate_simple_text_similarity(startup_sectors, investor_text)
+                    
                 scores.append(max(0, min(1, similarity)))  # Ensure score is between 0 and 1
-            except:
+            except Exception as e:
+                self.logger.warning(f"Error calculating sector similarity: {str(e)}")
                 scores.append(0.5)  # Fallback to neutral score
         
         return np.array(scores)
+    
+    def _calculate_simple_text_similarity(self, startup_sectors: List[str], investor_text: str) -> float:
+        """Calculate simple text similarity based on word overlap when scikit-learn is not available"""
+        if not startup_sectors or not investor_text:
+            return 0.5
+            
+        # Convert everything to lowercase
+        startup_words = set(" ".join(startup_sectors).lower().split())
+        investor_words = set(investor_text.lower().split())
+        
+        # Calculate Jaccard similarity (intersection over union)
+        intersection = len(startup_words.intersection(investor_words))
+        union = len(startup_words.union(investor_words))
+        
+        if union == 0:
+            return 0.5
+            
+        return intersection / union
     
     def _calculate_location_match(self, investors_df: pd.DataFrame, startup_profile: Dict[str, Any]) -> np.ndarray:
         """Calculate match score based on location preference"""

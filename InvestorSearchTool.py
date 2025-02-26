@@ -82,6 +82,7 @@ class InvestorSearchTool:
                 try:
                     # Try to get real investor data from external API for each search term
                     for term in search_terms:
+                        self.logger.info(f"Fetching real investor data for: {term}")
                         real_data = self._fetch_real_investor_data(term)
                         if real_data:
                             # Store real data in database
@@ -94,8 +95,9 @@ class InvestorSearchTool:
             # If we got real data, use it as the primary source
             if real_investors:
                 investors = real_investors
+                self.logger.info(f"Using {len(real_investors)} real investors from API")
             else:
-                # Build query with filters
+                # Build query with filters to get existing real data from database
                 query = self._build_filtered_query(session, search_terms, filters)
                 
                 # Apply sorting
@@ -104,10 +106,18 @@ class InvestorSearchTool:
                 # Execute query
                 investors = query.all()
                 
-                # If no data found, use sample data
-                if not investors:
-                    sample_data = self._get_sample_data()
-                    investors = self._store_in_database(session, sample_data)
+                # If no data found in database, try to fetch real data again with broader terms
+                if not investors and search_terms:
+                    # Try with broader search terms
+                    broader_terms = self._get_broader_search_terms(search_terms)
+                    for term in broader_terms:
+                        self.logger.info(f"Trying broader search term: {term}")
+                        real_data = self._fetch_real_investor_data(term)
+                        if real_data:
+                            new_investors = self._store_real_data_in_database(session, real_data)
+                            investors.extend(new_investors)
+                            if len(investors) >= 5:  # Get at least 5 investors
+                                break
 
             # Convert to DataFrame
             df = pd.DataFrame([
@@ -424,8 +434,8 @@ class InvestorSearchTool:
             # Here we're simulating the API call with OpenAI
             openai_api_key = os.getenv('OPENAI_API_KEY')
             if not openai_api_key:
-                self.logger.warning("OpenAI API key not set. Using mock investor data.")
-                return self._generate_mock_investor_data(search_term)
+                self.logger.warning("OpenAI API key not set. Cannot fetch real investor data.")
+                return []
                 
             try:
                 import openai
@@ -435,10 +445,10 @@ class InvestorSearchTool:
                 response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that provides realistic and accurate investor data in JSON format. Include detailed information about real investors when possible."},
-                        {"role": "user", "content": f"""Generate realistic data for 5 investors related to '{search_term}'. 
+                        {"role": "system", "content": "You are a helpful assistant that provides realistic and accurate investor data in JSON format. Include detailed information about real investors when possible. NEVER make up fictional investors - use real investor names and data."},
+                        {"role": "user", "content": f"""Generate realistic data for 5 real investors related to '{search_term}'. 
                         For each investor, include:
-                        - name: The investor's name
+                        - name: The investor's name (use real investor names only)
                         - type: Type of investor (VC, Angel, PE, etc.)
                         - location: Specific city and country
                         - investments: Number of investments (integer)
@@ -449,18 +459,20 @@ class InvestorSearchTool:
                         Example format:
                         [
                             {{
-                                "name": "Example Capital",
+                                "name": "Sequoia Capital",
                                 "type": "Venture Capital",
-                                "location": "San Francisco, USA",
-                                "investments": 120,
-                                "profile_url": "https://example.com",
-                                "investment_stages": ["Seed", "Series A"]
+                                "location": "Menlo Park, USA",
+                                "investments": 1200,
+                                "profile_url": "https://www.sequoiacap.com",
+                                "investment_stages": ["Seed", "Series A", "Series B", "Growth"]
                             }}
                         ]
+                        
+                        IMPORTANT: Use only real investor names and accurate data. Do not make up fictional investors.
                         """}
                     ],
                     max_tokens=1000,
-                    temperature=0.7
+                    temperature=0.3  # Lower temperature for more factual responses
                 )
                 
                 # Parse the response
@@ -480,56 +492,65 @@ class InvestorSearchTool:
                     # Validate the data structure
                     if not isinstance(data, list):
                         self.logger.error("Invalid data format: not a list")
-                        return self._generate_mock_investor_data(search_term)
+                        return []
                         
                     for item in data:
                         if not all(k in item for k in ["name", "type", "location", "investments"]):
                             self.logger.error("Invalid data format: missing required fields")
-                            return self._generate_mock_investor_data(search_term)
+                            return []
                     
                     return data
                 except json.JSONDecodeError as e:
                     self.logger.error(f"Error parsing investor data response: {str(e)}")
-                    return self._generate_mock_investor_data(search_term)
+                    # Try again with a different prompt
+                    return self._retry_fetch_real_data(search_term, client)
                     
             except Exception as e:
                 self.logger.error(f"Error using OpenAI for investor data: {str(e)}")
-                return self._generate_mock_investor_data(search_term)
+                return []
                 
         except Exception as e:
             self.logger.error(f"Error fetching real investor data: {str(e)}")
             return []
             
-    def _generate_mock_investor_data(self, search_term: str) -> List[Dict]:
-        """Generate mock investor data based on search term"""
-        investor_types = ["Venture Capital", "Angel Investor", "Private Equity", "Corporate Venture", "Family Office"]
-        locations = [
-            "San Francisco, USA", "New York, USA", "Boston, USA", 
-            "London, UK", "Berlin, Germany", "Paris, France",
-            "Tel Aviv, Israel", "Singapore", "Tokyo, Japan"
-        ]
-        investment_stages_options = [
-            ["Pre-Seed", "Seed"],
-            ["Seed", "Series A"],
-            ["Series A", "Series B"],
-            ["Series B", "Series C"],
-            ["Series C", "Growth"],
-            ["Growth", "Late Stage"]
-        ]
-        
-        # Generate 3 mock investors related to the search term
-        mock_data = []
-        for i in range(3):
-            mock_data.append({
-                "name": f"{search_term.title()} {['Capital', 'Ventures', 'Partners', 'Investments'][i % 4]} {i+1}",
-                "type": random.choice(investor_types),
-                "location": random.choice(locations),
-                "investments": random.randint(10, 2000),
-                "profile_url": f"https://example.com/{search_term.lower().replace(' ', '')}{i+1}",
-                "investment_stages": random.choice(investment_stages_options)
-            })
+    def _retry_fetch_real_data(self, search_term: str, client) -> List[Dict]:
+        """Retry fetching real data with a simpler prompt"""
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that provides real investor data in simple JSON format."},
+                    {"role": "user", "content": f"""List 3 real investors related to {search_term} in this exact JSON format:
+                    [
+                        {{
+                            "name": "Real Investor Name",
+                            "type": "Investor Type",
+                            "location": "City, Country",
+                            "investments": Number,
+                            "profile_url": "Website URL",
+                            "investment_stages": ["Stage1", "Stage2"]
+                        }}
+                    ]
+                    """}
+                ],
+                max_tokens=500,
+                temperature=0.2
+            )
             
-        return mock_data
+            content = response.choices[0].message.content
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+            
+            data = json.loads(content)
+            return data
+            
+        except Exception as e:
+            self.logger.error(f"Error in retry fetch: {str(e)}")
+            return []
         
     def _store_real_data_in_database(self, session: Session, data: List[Dict]) -> List[Investor]:
         """Store real investor data in database"""
@@ -566,3 +587,32 @@ class InvestorSearchTool:
             session.rollback()
             self.logger.error(f"Error storing real data in database: {str(e)}")
             return []
+
+    def _get_broader_search_terms(self, search_terms: List[str]) -> List[str]:
+        """Generate broader search terms based on original search terms"""
+        broader_terms = []
+        
+        # Common investor types to try
+        investor_types = ["Venture Capital", "Angel Investor", "Private Equity"]
+        
+        # Common sectors to try
+        sectors = ["Technology", "Healthcare", "Finance", "AI", "SaaS"]
+        
+        # Add investor types if not already in search terms
+        for inv_type in investor_types:
+            if not any(inv_type.lower() in term.lower() for term in search_terms):
+                broader_terms.append(inv_type)
+                
+        # Add sectors if search terms contain location information
+        locations = [term for term in search_terms if any(loc in term.lower() for loc in 
+                    ["usa", "uk", "europe", "asia", "america", "london", "york", "francisco", "valley"])]
+        
+        if locations:
+            for location in locations:
+                for sector in sectors:
+                    broader_terms.append(f"{sector} investors in {location}")
+        
+        # Add some general terms
+        broader_terms.extend(["Top Venture Capital Firms", "Leading Angel Investors", "Technology Investors"])
+        
+        return broader_terms

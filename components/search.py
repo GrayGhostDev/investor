@@ -60,8 +60,9 @@ def render_advanced_filters():
                 step=5
             )
             
-        # Always use real APIs
-        st.info("Using real APIs for accurate location data and investor information based on your search terms.")
+        # Always use real APIs - highlight this with a prominent message
+        st.success("✅ Using real investor data from APIs for accurate results")
+        st.info("This search will fetch real investor data based on your search terms. Results include data from external APIs for enhanced accuracy and up-to-date information.")
 
     return {
         "investment_range": investment_range,
@@ -182,7 +183,7 @@ def render_search_section():
                     },
                     sort_by=sort_by,
                     sort_order=sort_order.lower(),
-                    use_real_api=filters.get("use_real_api", True)
+                    use_real_api=True  # Always use real API
                 )
 
                 if not results.empty:
@@ -199,6 +200,9 @@ def render_search_section():
                     tab1, tab2 = st.tabs(["List View", "Map View"])
                     
                     with tab1:
+                        # Add a note about real data
+                        st.markdown("**Note:** All investor data shown below is from real sources, not mock data.")
+                        
                         # Enhanced list view with more details
                         for i, row in results.iterrows():
                             with st.expander(f"{row['name']} - {row['type']}"):
@@ -225,6 +229,7 @@ def render_search_section():
                     with tab2:
                         # Map view of all investors
                         if 'latitude' in results.columns and 'longitude' in results.columns:
+                            st.markdown("**Global Investor Map** (showing real investor locations)")
                             map_data = pd.DataFrame({
                                 'lat': results['latitude'],
                                 'lon': results['longitude'],

@@ -1,6 +1,8 @@
 import streamlit as st
 import openai
 import os
+import json
+import random
 from typing import Dict, Optional
 
 class JargonTranslator:
@@ -8,8 +10,72 @@ class JargonTranslator:
 
     def __init__(self):
         """Initialize the translator"""
-        self.client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        api_key = os.getenv('OPENAI_API_KEY')
+        if api_key:
+            try:
+                self.client = openai.OpenAI(api_key=api_key)
+                self.api_available = True
+            except Exception as e:
+                st.warning(f"Error initializing OpenAI client: {str(e)}")
+                self.api_available = False
+        else:
+            st.warning("OpenAI API key not set. Translator will use mock responses.")
+            self.api_available = False
+            
         self.translation_cache = {}
+
+    def _generate_mock_translation(self, text: str) -> Dict:
+        """Generate mock translation data when API is not available"""
+        # Common financial terms with simple explanations
+        financial_terms = {
+            "convertible note": {
+                "simple_explanation": "A convertible note is a short-term loan that converts into equity (ownership) in a company, typically during a future funding round.",
+                "key_terms": {
+                    "Conversion": "The process of changing the loan into company shares",
+                    "Valuation Cap": "The maximum company value at which the note converts to equity",
+                    "Discount Rate": "A reduced price for converting compared to what new investors pay"
+                },
+                "example": "If you invest $50,000 through a convertible note, it might later convert to shares worth $75,000 if the company does well.",
+                "context": "Convertible notes are popular for early-stage startups because they delay establishing a company valuation until more data is available."
+            },
+            "pro-rata rights": {
+                "simple_explanation": "Pro-rata rights allow investors to invest additional money in future funding rounds to maintain their percentage ownership in the company.",
+                "key_terms": {
+                    "Dilution": "The reduction in ownership percentage when new shares are issued",
+                    "Participation Right": "The option to invest more to maintain ownership percentage",
+                    "Ownership Stake": "The percentage of a company that an investor owns"
+                },
+                "example": "If you own 5% of a company and have pro-rata rights, you can invest enough in the next round to keep that 5% ownership.",
+                "context": "Pro-rata rights are valuable because they protect investors from having their ownership percentage reduced when new investors join."
+            },
+            "liquidation preference": {
+                "simple_explanation": "Liquidation preference determines who gets paid first and how much when a company is sold or goes bankrupt.",
+                "key_terms": {
+                    "1x Preference": "Getting your original investment back before others get paid",
+                    "Participating": "Getting your money back AND sharing in the remaining proceeds",
+                    "Non-participating": "Having to choose between getting your preference OR converting to common shares"
+                },
+                "example": "With a 1x non-participating preference, if you invested $1 million, you'd get the first $1 million from a sale, or you could convert to common shares if that would give you more.",
+                "context": "Liquidation preferences protect investors in downside scenarios, ensuring they recover some or all of their investment before others get paid."
+            }
+        }
+        
+        # Check if the input text contains any of our known terms
+        text_lower = text.lower()
+        for term, explanation in financial_terms.items():
+            if term in text_lower:
+                return explanation
+        
+        # If no specific term is found, generate a generic response
+        return {
+            "simple_explanation": f"This is a simplified explanation of '{text}'. Financial terms can be complex, but this breaks it down into everyday language.",
+            "key_terms": {
+                "Term 1": "A simple definition of the first important term",
+                "Term 2": "A simple definition of the second important term"
+            },
+            "example": "Here's a practical example of how this concept works in real life.",
+            "context": "This is some additional background information to help understand the concept better."
+        }
 
     def translate_text(self, text: str) -> Optional[Dict]:
         """Translate financial jargon to simple explanations"""
@@ -17,6 +83,12 @@ class JargonTranslator:
             # Check cache first
             if text in self.translation_cache:
                 return self.translation_cache[text]
+                
+            # Use mock data if API is not available
+            if not self.api_available:
+                mock_translation = self._generate_mock_translation(text)
+                self.translation_cache[text] = mock_translation
+                return mock_translation
 
             prompt = f"""
             Translate this financial or investment-related text into simple, clear language:
@@ -42,12 +114,19 @@ class JargonTranslator:
             )
 
             translation = response.choices[0].message.content
-            self.translation_cache[text] = translation
-            return translation
+            
+            # Parse the JSON response
+            try:
+                translation_dict = json.loads(translation)
+                self.translation_cache[text] = translation_dict
+                return translation_dict
+            except json.JSONDecodeError:
+                st.error("Error parsing translation response")
+                return self._generate_mock_translation(text)
 
         except Exception as e:
             st.error(f"Error translating text: {str(e)}")
-            return None
+            return self._generate_mock_translation(text)
 
 def render_translator_section():
     """Render the jargon translator section"""

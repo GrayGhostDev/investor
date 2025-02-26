@@ -489,7 +489,10 @@ def render_matching_algorithm_section(investors_df: pd.DataFrame = None):
                 "Industry/Sector",
                 ["Technology", "Healthcare", "Finance", "Consumer", "Enterprise", "AI/ML", 
                  "Blockchain", "SaaS", "E-commerce", "Mobile", "IoT", "Clean Tech",
-                 "B2B", "B2C", "Hardware", "Software", "Deep Tech"],
+                 "B2B", "B2C", "Hardware", "Software", "Deep Tech", "Cybersecurity", 
+                 "EdTech", "AgTech", "BioTech", "Gaming", "AR/VR", "Robotics", 
+                 "Space Tech", "Quantum Computing", "Sustainability", "PropTech", 
+                 "InsurTech", "Marketplace", "Developer Tools"],
                 default=[]
             )
             

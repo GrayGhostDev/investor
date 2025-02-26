@@ -223,7 +223,10 @@ def render_pitch_deck_generator(df: pd.DataFrame):
             "Select Your Focus Areas",
             ["B2B SaaS", "Enterprise Software", "Consumer Tech", "AI/ML", 
              "Healthcare Tech", "FinTech", "E-commerce", "Mobile Apps",
-             "Clean Tech", "Hardware", "Marketplace", "Developer Tools"],
+             "Clean Tech", "Hardware", "Marketplace", "Developer Tools",
+             "Cybersecurity", "EdTech", "AgTech", "BioTech", "Gaming", "AR/VR", 
+             "Robotics", "Space Tech", "Quantum Computing", "Sustainability", 
+             "PropTech", "InsurTech", "Deep Tech", "B2B", "B2C", "Blockchain", "IoT"],
             max_selections=3,
             help="Choose up to 3 main focus areas for your startup"
         )

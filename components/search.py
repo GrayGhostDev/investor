@@ -35,7 +35,11 @@ def render_advanced_filters():
             sectors = st.multiselect(
                 "Investment Sectors",
                 ["Technology", "Healthcare", "Finance", "Consumer", "Enterprise", "AI/ML", 
-                 "Blockchain", "SaaS", "E-commerce", "Mobile", "IoT", "Clean Tech"],
+                 "Blockchain", "SaaS", "E-commerce", "Mobile", "IoT", "Clean Tech",
+                 "Cybersecurity", "EdTech", "AgTech", "BioTech", "Gaming", "AR/VR", 
+                 "Robotics", "Space Tech", "Quantum Computing", "Sustainability", 
+                 "PropTech", "InsurTech", "Deep Tech", "B2B", "B2C", "Hardware", 
+                 "Software", "Marketplace", "Developer Tools"],
                 default=[]
             )
 
@@ -95,7 +99,12 @@ def render_search_filters():
     with col2:
         focus_area = st.multiselect(
             "Primary Focus",
-            ["B2B", "B2C", "Hardware", "Software", "Deep Tech", "Consumer"],
+            ["B2B", "B2C", "Hardware", "Software", "Deep Tech", "Consumer", 
+             "AI/ML", "SaaS", "Enterprise Software", "FinTech", "Healthcare Tech", 
+             "E-commerce", "Mobile Apps", "Clean Tech", "Blockchain", "IoT", 
+             "Cybersecurity", "EdTech", "AgTech", "BioTech", "Marketplace", 
+             "Developer Tools", "Gaming", "AR/VR", "Robotics", "Space Tech", 
+             "Quantum Computing", "Sustainability", "PropTech", "InsurTech"],
             default=[]
         )
 

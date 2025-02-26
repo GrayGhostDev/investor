@@ -57,6 +57,77 @@ class MarketSentimentTracker:
 
         return news_items
 
+    def _generate_mock_sentiment(self) -> Dict:
+        """Generate mock sentiment data for demonstration"""
+        # Create random sentiment data
+        sentiment_score = random.uniform(-0.8, 0.8)
+        confidence_level = random.randint(50, 95)
+        
+        # Generate random trends based on sentiment
+        positive_trends = [
+            "Increased VC funding in AI startups",
+            "Growing interest in climate tech",
+            "Higher valuations for SaaS companies",
+            "More corporate venture capital activity",
+            "Expansion of early-stage funding"
+        ]
+        
+        negative_trends = [
+            "Decreased late-stage funding",
+            "More conservative investment strategies",
+            "Longer due diligence processes",
+            "Lower valuations across sectors",
+            "Reduced IPO activity"
+        ]
+        
+        # Select trends based on sentiment
+        if sentiment_score > 0:
+            trends = random.sample(positive_trends, k=min(3, len(positive_trends)))
+            if random.random() < 0.3:  # Add one negative for balance
+                trends.append(random.choice(negative_trends))
+        else:
+            trends = random.sample(negative_trends, k=min(3, len(negative_trends)))
+            if random.random() < 0.3:  # Add one positive for balance
+                trends.append(random.choice(positive_trends))
+        
+        # Generate random sectors
+        all_sectors = [
+            "AI/ML", "Fintech", "Healthcare", "Enterprise SaaS", 
+            "Consumer Tech", "Climate Tech", "Cybersecurity",
+            "E-commerce", "Edtech", "Blockchain"
+        ]
+        sectors = random.sample(all_sectors, k=random.randint(2, 4))
+        
+        # Generate insights
+        positive_insights = [
+            "Strong founder experience is increasingly valued",
+            "Investors focusing on sustainable business models",
+            "International expansion opportunities growing",
+            "Strategic partnerships becoming more important"
+        ]
+        
+        negative_insights = [
+            "Concerns about market saturation in some sectors",
+            "Regulatory challenges increasing in tech",
+            "Talent acquisition remains difficult",
+            "Rising interest rates affecting investment strategies"
+        ]
+        
+        if sentiment_score > 0:
+            insights = random.sample(positive_insights, k=min(2, len(positive_insights)))
+        else:
+            insights = random.sample(negative_insights, k=min(2, len(negative_insights)))
+        
+        # Return formatted mock data
+        return {
+            "sentiment_score": sentiment_score,
+            "trends": trends,
+            "confidence_level": confidence_level,
+            "sectors": sectors,
+            "insights": insights,
+            "timestamp": datetime.now()
+        }
+
     def analyze_sentiment(self, text: str) -> Dict:
         """Analyze sentiment using OpenAI API"""
         if not self.api_available:

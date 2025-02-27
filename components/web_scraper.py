@@ -9,469 +9,489 @@ from typing import List, Dict, Any, Optional
 import random
 import json
 from urllib.parse import quote_plus
+import streamlit as st
+from fake_useragent import UserAgent
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("WebScraper")
 
 class InvestorWebScraper:
-    """Class to scrape additional investor information from the web"""
+    """Web scraper for finding investor information from various sources"""
     
     def __init__(self):
+        """Initialize the web scraper"""
         self.logger = logging.getLogger("WebScraper")
+        self.user_agent = UserAgent()
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+            'User-Agent': self.user_agent.random,
             'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
         })
-        self.cache = {}
         self.logger.info("InvestorWebScraper initialized")
         
-    def search_for_investors(self, search_terms: List[str], location: Optional[str] = None) -> List[Dict[str, Any]]:
+        # Cache for search results
+        self.cache = {}
+        
+    def search_investors(self, search_terms: List[str], location: Optional[str] = None) -> pd.DataFrame:
         """
         Search for investors based on search terms and location
         
         Args:
             search_terms: List of search terms
-            location: Optional location to filter results
+            location: Optional location filter
             
         Returns:
-            List of investor data dictionaries
+            DataFrame containing investor information
         """
-        results = []
+        # Create cache key
+        cache_key = f"{'-'.join(search_terms)}-{location}"
         
-        # Create a combined search query
-        combined_terms = " ".join(search_terms)
-        if location:
-            combined_terms += f" {location}"
-            
-        query = f"venture capital investors {combined_terms}"
-        
-        # Check cache first
-        cache_key = f"{query}_{location}"
+        # Check cache
         if cache_key in self.cache:
-            self.logger.info(f"Using cached results for: {query}")
+            self.logger.info(f"Using cached results for {cache_key}")
             return self.cache[cache_key]
         
-        # Search sources
+        # For demo purposes, we'll use mock data instead of actual web scraping
+        # In a real implementation, this would make requests to investor directories
+        self.logger.info(f"Searching for investors with terms: {search_terms}, location: {location}")
+        
         try:
-            # Try multiple sources and combine results
-            crunchbase_results = self._search_crunchbase_like(query)
-            results.extend(crunchbase_results)
+            # Simulate web scraping delay
+            time.sleep(random.uniform(0.5, 1.5))
             
-            # Add a small delay to avoid rate limiting
-            time.sleep(1)
+            # Generate mock results based on search terms
+            results = self._generate_mock_results(search_terms, location)
             
-            # Search for news articles about these investors
-            for investor in results[:5]:  # Limit to top 5 to avoid too many requests
-                if 'name' in investor:
-                    news = self._search_investor_news(investor['name'])
-                    if news:
-                        investor['recent_news'] = news[:3]  # Keep only top 3 news items
-            
-            # Cache the results
+            # Cache results
             self.cache[cache_key] = results
-            return results
             
+            return results
+        
         except Exception as e:
             self.logger.error(f"Error searching for investors: {str(e)}")
-            return []
+            return pd.DataFrame()
     
-    def _search_crunchbase_like(self, query: str) -> List[Dict[str, Any]]:
+    def _generate_mock_results(self, search_terms: List[str], location: Optional[str] = None) -> pd.DataFrame:
         """
-        Search for investors using a Crunchbase-like approach
-        This is a simulation since we don't have direct API access
+        Generate mock search results for demonstration purposes
+        
+        Args:
+            search_terms: List of search terms
+            location: Optional location filter
+            
+        Returns:
+            DataFrame with mock investor data
         """
-        investors = []
-        
-        try:
-            # Use DuckDuckGo search as it's more scraper-friendly
-            search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}+site:crunchbase.com"
-            response = self.session.get(search_url, timeout=10)
-            
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'lxml')
-                results = soup.select('.result')
-                
-                for result in results[:10]:  # Limit to top 10 results
-                    title_elem = result.select_one('.result__title')
-                    snippet_elem = result.select_one('.result__snippet')
-                    url_elem = result.select_one('.result__url')
-                    
-                    if title_elem and snippet_elem:
-                        title = title_elem.get_text(strip=True)
-                        snippet = snippet_elem.get_text(strip=True)
-                        url = url_elem.get_text(strip=True) if url_elem else ""
-                        
-                        # Extract investor information from the title and snippet
-                        investor_data = self._extract_investor_data(title, snippet, url)
-                        if investor_data:
-                            investors.append(investor_data)
-            
-            return investors
-            
-        except Exception as e:
-            self.logger.error(f"Error in Crunchbase search: {str(e)}")
-            # Return some mock data as fallback
-            return self._get_mock_investor_data(query, 5)
-    
-    def _search_investor_news(self, investor_name: str) -> List[Dict[str, str]]:
-        """Search for recent news about an investor"""
-        news_items = []
-        
-        try:
-            # Use DuckDuckGo news search
-            search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(investor_name)}+venture+capital+news"
-            response = self.session.get(search_url, timeout=10)
-            
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'lxml')
-                results = soup.select('.result')
-                
-                for result in results[:5]:  # Limit to top 5 news items
-                    title_elem = result.select_one('.result__title')
-                    snippet_elem = result.select_one('.result__snippet')
-                    url_elem = result.select_one('.result__url')
-                    
-                    if title_elem and snippet_elem:
-                        news_items.append({
-                            'title': title_elem.get_text(strip=True),
-                            'snippet': snippet_elem.get_text(strip=True),
-                            'url': url_elem.get_text(strip=True) if url_elem else "",
-                            'date': self._extract_date(snippet_elem.get_text(strip=True))
-                        })
-            
-            return news_items
-            
-        except Exception as e:
-            self.logger.error(f"Error searching for investor news: {str(e)}")
-            return []
-    
-    def _extract_date(self, text: str) -> str:
-        """Extract date from text if available"""
-        date_patterns = [
-            r'\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\b',
-            r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b'
+        # Define mock investor data templates
+        investor_templates = [
+            {
+                "name": "TechVentures Capital",
+                "type": "Venture Capital",
+                "location": "San Francisco, USA",
+                "investments": random.randint(50, 200),
+                "investment_stages": ["Seed", "Series A"],
+                "profile_url": "https://example.com/techventures",
+                "focus_areas": ["SaaS", "AI/ML", "Enterprise Software"],
+                "latitude": 37.7749,
+                "longitude": -122.4194
+            },
+            {
+                "name": "Global Innovation Partners",
+                "type": "Venture Capital",
+                "location": "New York, USA",
+                "investments": random.randint(100, 300),
+                "investment_stages": ["Series A", "Series B"],
+                "profile_url": "https://example.com/gip",
+                "focus_areas": ["FinTech", "Healthcare", "E-commerce"],
+                "latitude": 40.7128,
+                "longitude": -74.0060
+            },
+            {
+                "name": "Future Fund Investments",
+                "type": "Private Equity",
+                "location": "London, UK",
+                "investments": random.randint(30, 150),
+                "investment_stages": ["Series B", "Series C", "Growth"],
+                "profile_url": "https://example.com/futurefund",
+                "focus_areas": ["FinTech", "Marketplace", "SaaS"],
+                "latitude": 51.5074,
+                "longitude": -0.1278
+            },
+            {
+                "name": "Angel Innovators Network",
+                "type": "Angel Investor",
+                "location": "Berlin, Germany",
+                "investments": random.randint(10, 50),
+                "investment_stages": ["Pre-Seed", "Seed"],
+                "profile_url": "https://example.com/angelinnovators",
+                "focus_areas": ["Consumer", "Mobile Apps", "E-commerce"],
+                "latitude": 52.5200,
+                "longitude": 13.4050
+            },
+            {
+                "name": "Startup Accelerator Group",
+                "type": "Accelerator",
+                "location": "Boston, USA",
+                "investments": random.randint(20, 100),
+                "investment_stages": ["Pre-Seed", "Seed"],
+                "profile_url": "https://example.com/startupaccelerator",
+                "focus_areas": ["BioTech", "Healthcare Tech", "Deep Tech"],
+                "latitude": 42.3601,
+                "longitude": -71.0589
+            }
         ]
         
-        for pattern in date_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                return match.group(0)
+        # Generate variations of the templates based on search terms
+        results = []
         
-        return "Recent"
-    
-    def _extract_investor_data(self, title: str, snippet: str, url: str) -> Optional[Dict[str, Any]]:
-        """Extract structured investor data from search results"""
-        # Skip non-investor results
-        if not any(term in title.lower() or term in snippet.lower() 
-                  for term in ['venture', 'capital', 'investor', 'fund', 'vc']):
-            return None
+        # Number of results to generate
+        num_results = random.randint(3, 8)
+        
+        for i in range(num_results):
+            # Select a random template
+            template = random.choice(investor_templates).copy()
             
-        # Extract investor name - usually the first part of the title before special characters
-        name_match = re.match(r'^([^|:–-]+)', title)
-        name = name_match.group(1).strip() if name_match else title.split('|')[0].strip()
-        
-        # Extract location from snippet
-        location_patterns = [
-            r'based in ([^\.]+)',
-            r'from ([^\.]+)',
-            r'located in ([^\.]+)'
-        ]
-        
-        location = None
-        for pattern in location_patterns:
-            match = re.search(pattern, snippet, re.IGNORECASE)
-            if match:
-                location = match.group(1).strip()
-                break
+            # Modify template based on search terms
+            for term in search_terms:
+                term_lower = term.lower()
                 
-        # Extract investment focus
-        focus = []
-        focus_keywords = ['technology', 'healthcare', 'fintech', 'software', 'consumer', 
-                         'enterprise', 'ai', 'machine learning', 'saas', 'biotech']
+                # Modify investor type if term matches a type
+                if term_lower in ["venture capital", "vc", "angel", "private equity", "accelerator", "incubator"]:
+                    if "venture" in term_lower or "vc" == term_lower:
+                        template["type"] = "Venture Capital"
+                    elif "angel" in term_lower:
+                        template["type"] = "Angel Investor"
+                    elif "private equity" in term_lower or "pe" == term_lower:
+                        template["type"] = "Private Equity"
+                    elif "accelerator" in term_lower:
+                        template["type"] = "Accelerator"
+                    elif "incubator" in term_lower:
+                        template["type"] = "Incubator"
+                
+                # Modify focus areas if term matches a sector
+                sectors = ["SaaS", "AI", "ML", "FinTech", "Healthcare", "E-commerce", 
+                           "Enterprise", "Consumer", "Mobile", "BioTech", "Deep Tech", 
+                           "Marketplace", "B2B", "B2C", "Blockchain", "Cybersecurity"]
+                
+                for sector in sectors:
+                    if sector.lower() in term_lower or term_lower in sector.lower():
+                        if sector not in template["focus_areas"]:
+                            template["focus_areas"].append(sector)
+                
+                # Modify investment stages if term matches a stage
+                stages = ["Pre-Seed", "Seed", "Series A", "Series B", "Series C", "Growth", "Late Stage"]
+                
+                for stage in stages:
+                    if stage.lower() in term_lower or term_lower in stage.lower():
+                        if stage not in template["investment_stages"]:
+                            template["investment_stages"].append(stage)
+            
+            # Modify location if specified
+            if location:
+                # List of major tech hubs
+                tech_hubs = {
+                    "san francisco": {"city": "San Francisco", "country": "USA", "lat": 37.7749, "lng": -122.4194},
+                    "new york": {"city": "New York", "country": "USA", "lat": 40.7128, "lng": -74.0060},
+                    "boston": {"city": "Boston", "country": "USA", "lat": 42.3601, "lng": -71.0589},
+                    "london": {"city": "London", "country": "UK", "lat": 51.5074, "lng": -0.1278},
+                    "berlin": {"city": "Berlin", "country": "Germany", "lat": 52.5200, "lng": 13.4050},
+                    "paris": {"city": "Paris", "country": "France", "lat": 48.8566, "lng": 2.3522},
+                    "tel aviv": {"city": "Tel Aviv", "country": "Israel", "lat": 32.0853, "lng": 34.7818},
+                    "singapore": {"city": "Singapore", "country": "Singapore", "lat": 1.3521, "lng": 103.8198},
+                    "tokyo": {"city": "Tokyo", "country": "Japan", "lat": 35.6762, "lng": 139.6503},
+                    "toronto": {"city": "Toronto", "country": "Canada", "lat": 43.6532, "lng": -79.3832},
+                    "sydney": {"city": "Sydney", "country": "Australia", "lat": -33.8688, "lng": 151.2093}
+                }
+                
+                location_lower = location.lower()
+                
+                # Check if location matches any tech hub
+                for hub_name, hub_data in tech_hubs.items():
+                    if hub_name in location_lower or location_lower in hub_name:
+                        template["location"] = f"{hub_data['city']}, {hub_data['country']}"
+                        template["latitude"] = hub_data["lat"]
+                        template["longitude"] = hub_data["lng"]
+                        break
+                else:
+                    # If no match, use the location as is
+                    template["location"] = location
+                    # Generate random coordinates (not accurate, just for demo)
+                    template["latitude"] = random.uniform(-90, 90)
+                    template["longitude"] = random.uniform(-180, 180)
+            
+            # Generate a unique name
+            name_prefixes = ["Global", "Tech", "Future", "Innovation", "Venture", "Capital", 
+                             "Digital", "Alpha", "Beta", "Omega", "Pioneer", "Frontier", 
+                             "Next", "Prime", "Elite", "Strategic", "Horizon", "Summit"]
+            
+            name_suffixes = ["Ventures", "Capital", "Partners", "Investments", "Fund", 
+                             "Group", "Associates", "Network", "Alliance", "Collective"]
+            
+            template["name"] = f"{random.choice(name_prefixes)} {random.choice(name_suffixes)} {i+1}"
+            
+            # Add to results
+            results.append(template)
         
-        for keyword in focus_keywords:
-            if keyword in snippet.lower() or keyword in title.lower():
-                focus.append(keyword.title())
+        # Convert to DataFrame
+        df = pd.DataFrame(results)
         
-        # Extract investment stages if mentioned
-        stages = []
-        stage_keywords = ['seed', 'early stage', 'series a', 'series b', 'growth', 'late stage']
+        return df
+    
+    def get_investor_details(self, profile_url: str) -> Dict[str, Any]:
+        """
+        Get detailed information about an investor from their profile page
         
-        for keyword in stage_keywords:
-            if keyword in snippet.lower() or keyword in title.lower():
-                stages.append(keyword.title())
+        Args:
+            profile_url: URL of the investor's profile
+            
+        Returns:
+            Dictionary containing detailed investor information
+        """
+        self.logger.info(f"Getting investor details from: {profile_url}")
         
-        return {
-            'name': name,
-            'type': 'Venture Capital' if 'venture' in (title + snippet).lower() else 'Investor',
-            'location': location or 'Unknown',
-            'focus_areas': focus,
-            'investment_stages': stages,
-            'description': snippet,
-            'source_url': url,
-            'scraped': True  # Mark as scraped data
+        try:
+            # Simulate web scraping delay
+            time.sleep(random.uniform(0.5, 1.5))
+            
+            # Generate mock details
+            details = self._generate_mock_details(profile_url)
+            
+            return details
+        
+        except Exception as e:
+            self.logger.error(f"Error getting investor details: {str(e)}")
+            return {}
+    
+    def _generate_mock_details(self, profile_url: str) -> Dict[str, Any]:
+        """
+        Generate mock investor details for demonstration purposes
+        
+        Args:
+            profile_url: URL of the investor's profile
+            
+        Returns:
+            Dictionary with mock investor details
+        """
+        # Extract investor name from URL
+        name_match = re.search(r'\/([^\/]+)$', profile_url)
+        name = name_match.group(1) if name_match else "Unknown Investor"
+        name = name.replace("-", " ").title()
+        
+        # Generate random portfolio companies
+        portfolio_companies = []
+        company_names = ["TechStart", "DataFlow", "CloudScale", "MobileFirst", "AILabs", 
+                         "BlockChain Solutions", "HealthTech", "EduLearn", "FinanceApp", 
+                         "RetailTech", "SmartHome", "GreenEnergy", "FoodTech", "TravelApp"]
+        
+        num_companies = random.randint(5, 15)
+        for _ in range(num_companies):
+            company = {
+                "name": random.choice(company_names) + str(random.randint(1, 100)),
+                "stage": random.choice(["Pre-Seed", "Seed", "Series A", "Series B", "Series C"]),
+                "year": random.randint(2015, 2023)
+            }
+            portfolio_companies.append(company)
+        
+        # Generate random team members
+        team_members = []
+        first_names = ["John", "Sarah", "Michael", "Emma", "David", "Jennifer", "Robert", "Lisa"]
+        last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Miller", "Davis", "Garcia"]
+        
+        num_members = random.randint(3, 8)
+        for _ in range(num_members):
+            member = {
+                "name": f"{random.choice(first_names)} {random.choice(last_names)}",
+                "title": random.choice(["Partner", "Managing Partner", "General Partner", "Principal", "Associate"]),
+                "bio": "Experienced investor with a background in technology and finance."
+            }
+            team_members.append(member)
+        
+        # Generate random investment criteria
+        investment_criteria = {
+            "min_investment": f"${random.choice([50, 100, 250, 500, 1000])}K",
+            "max_investment": f"${random.choice([1, 2, 5, 10, 20])}M",
+            "preferred_stages": random.sample(["Pre-Seed", "Seed", "Series A", "Series B", "Series C", "Growth"], k=random.randint(2, 4)),
+            "geographic_focus": random.sample(["North America", "Europe", "Asia", "Global"], k=random.randint(1, 3)),
+            "sector_focus": random.sample(["SaaS", "AI/ML", "FinTech", "Healthcare", "E-commerce", "Enterprise", "Consumer", "Mobile", "BioTech", "Deep Tech"], k=random.randint(3, 6))
         }
-    
-    def _get_mock_investor_data(self, query: str, count: int = 3) -> List[Dict[str, Any]]:
-        """Generate mock investor data as fallback"""
-        investors = []
         
-        # Extract keywords from query
-        keywords = query.lower().split()
-        locations = ['San Francisco', 'New York', 'Boston', 'London', 'Berlin', 'Tel Aviv']
-        focus_areas = ['AI/ML', 'SaaS', 'Fintech', 'Healthcare', 'Consumer Tech', 'Enterprise Software']
-        stages = ['Seed', 'Series A', 'Series B', 'Growth']
+        # Compile details
+        details = {
+            "name": name,
+            "profile_url": profile_url,
+            "description": f"{name} is a leading investment firm focused on {', '.join(investment_criteria['sector_focus'][:2])} startups.",
+            "founded": random.randint(2000, 2020),
+            "headquarters": random.choice(["San Francisco, USA", "New York, USA", "London, UK", "Berlin, Germany", "Singapore"]),
+            "assets_under_management": f"${random.randint(10, 1000)}M",
+            "portfolio_companies": portfolio_companies,
+            "team_members": team_members,
+            "investment_criteria": investment_criteria,
+            "contact_info": {
+                "email": f"info@{name.lower().replace(' ', '')}.com",
+                "phone": f"+1 (555) {random.randint(100, 999)}-{random.randint(1000, 9999)}",
+                "social_media": {
+                    "twitter": f"https://twitter.com/{name.lower().replace(' ', '')}",
+                    "linkedin": f"https://linkedin.com/company/{name.lower().replace(' ', '')}"
+                }
+            }
+        }
         
-        for i in range(count):
-            # Use keywords to make the mock data somewhat relevant to the query
-            relevant_focus = random.sample([f for f in focus_areas if any(k in f.lower() for k in keywords)] or focus_areas, 
-                                          k=min(3, len(focus_areas)))
-            
-            investors.append({
-                'name': f"Venture Fund {i+1} {' '.join(random.sample(keywords, k=min(2, len(keywords))))}".title(),
-                'type': 'Venture Capital',
-                'location': random.choice(locations),
-                'focus_areas': relevant_focus,
-                'investment_stages': random.sample(stages, k=random.randint(1, 3)),
-                'description': f"A venture capital firm focused on {', '.join(relevant_focus)} investments at {random.choice(stages)} stage.",
-                'source_url': "https://example.com",
-                'scraped': True  # Mark as scraped data
-            })
-        
-        return investors
-    
-    def enrich_investor_data(self, investor_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Enrich existing investor data with additional information from the web
-        
-        Args:
-            investor_data: Existing investor data dictionary
-            
-        Returns:
-            Enriched investor data dictionary
-        """
-        if not investor_data.get('name'):
-            return investor_data
-            
-        try:
-            # Search for news about this investor
-            news = self._search_investor_news(investor_data['name'])
-            if news:
-                investor_data['recent_news'] = news[:3]
-                
-            # Try to find additional information about investment focus
-            if 'focus_areas' not in investor_data or not investor_data['focus_areas']:
-                search_results = self._search_crunchbase_like(f"{investor_data['name']} venture focus")
-                if search_results and len(search_results) > 0:
-                    if 'focus_areas' in search_results[0] and search_results[0]['focus_areas']:
-                        investor_data['focus_areas'] = search_results[0]['focus_areas']
-            
-            return investor_data
-            
-        except Exception as e:
-            self.logger.error(f"Error enriching investor data: {str(e)}")
-            return investor_data
-            
-    def get_portfolio_companies(self, investor_name: str) -> List[Dict[str, Any]]:
-        """
-        Get portfolio companies for a specific investor
-        
-        Args:
-            investor_name: Name of the investor
-            
-        Returns:
-            List of portfolio company data
-        """
-        companies = []
-        
-        try:
-            # Search for portfolio companies
-            search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(investor_name)}+portfolio+companies"
-            response = self.session.get(search_url, timeout=10)
-            
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'lxml')
-                results = soup.select('.result')
-                
-                for result in results[:8]:  # Limit to top 8 results
-                    title_elem = result.select_one('.result__title')
-                    snippet_elem = result.select_one('.result__snippet')
-                    
-                    if title_elem and snippet_elem:
-                        title = title_elem.get_text(strip=True)
-                        snippet = snippet_elem.get_text(strip=True)
-                        
-                        # Extract company names from the snippet
-                        company_names = self._extract_company_names(snippet)
-                        for company in company_names:
-                            if company.lower() not in [c['name'].lower() for c in companies]:
-                                companies.append({
-                                    'name': company,
-                                    'investor': investor_name,
-                                    'description': self._extract_company_description(company, snippet)
-                                })
-            
-            # If we couldn't find any, return mock data
-            if not companies:
-                return self._get_mock_portfolio_companies(investor_name)
-                
-            return companies
-            
-        except Exception as e:
-            self.logger.error(f"Error getting portfolio companies: {str(e)}")
-            return self._get_mock_portfolio_companies(investor_name)
-    
-    def _extract_company_names(self, text: str) -> List[str]:
-        """Extract company names from text"""
-        # This is a simplified approach - in a real implementation, 
-        # you would use NER (Named Entity Recognition) for better results
-        
-        # Look for company patterns like "X, Y, and Z"
-        companies = []
-        
-        # Look for companies in a list format
-        list_pattern = r'(?:companies|portfolio|investments)(?:[^.]*?):([^.]+)'
-        list_match = re.search(list_pattern, text, re.IGNORECASE)
-        
-        if list_match:
-            company_text = list_match.group(1)
-            # Split by commas and 'and'
-            company_list = re.split(r',|\sand\s', company_text)
-            companies.extend([c.strip() for c in company_list if c.strip()])
-        
-        # Look for companies mentioned with "invested in" or similar phrases
-        invested_pattern = r'invested in ([^,.]+)'
-        for match in re.finditer(invested_pattern, text, re.IGNORECASE):
-            companies.append(match.group(1).strip())
-        
-        # Remove duplicates and non-company words
-        non_company_words = ['they', 'the', 'their', 'these', 'those', 'other', 'many', 'some', 'few']
-        filtered_companies = []
-        
-        for company in companies:
-            if (len(company.split()) <= 4 and  # Most company names are 1-4 words
-                company.lower() not in non_company_words and
-                not company.isdigit() and
-                len(company) > 2):
-                filtered_companies.append(company)
-        
-        return filtered_companies
-    
-    def _extract_company_description(self, company_name: str, text: str) -> str:
-        """Extract description for a company from text"""
-        # Look for sentences containing the company name
-        sentences = re.split(r'[.!?]', text)
-        relevant_sentences = [s for s in sentences if company_name.lower() in s.lower()]
-        
-        if relevant_sentences:
-            return relevant_sentences[0].strip()
-        
-        return f"Portfolio company of {company_name}"
-    
-    def _get_mock_portfolio_companies(self, investor_name: str) -> List[Dict[str, Any]]:
-        """Generate mock portfolio company data"""
-        sectors = ['AI', 'Fintech', 'Healthcare', 'SaaS', 'Consumer', 'Enterprise']
-        prefixes = ['Tech', 'App', 'Health', 'Fin', 'Data', 'Cloud', 'Smart', 'Cyber']
-        suffixes = ['AI', 'Labs', 'Health', 'Tech', 'Systems', 'Networks', 'Solutions', 'Analytics']
-        
-        companies = []
-        for i in range(random.randint(3, 6)):
-            sector = random.choice(sectors)
-            name = f"{random.choice(prefixes)}{random.choice(suffixes)}"
-            
-            companies.append({
-                'name': name,
-                'investor': investor_name,
-                'description': f"{name} is a {sector} company that provides innovative solutions for businesses and consumers.",
-                'sector': sector
-            })
-        
-        return companies
+        return details
 
-def render_web_scraper_section(search_terms: List[str], location: str = None):
-    """Render the web scraper section in the Streamlit app"""
-    import streamlit as st
+def render_web_scraper_section(search_terms: List[str] = None, location: str = None):
+    """
+    Render the web scraper section in the Streamlit app
     
-    st.header("Web Intelligence")
+    Args:
+        search_terms: Optional list of search terms from the main search
+        location: Optional location from the main search
+    """
+    st.subheader("Web Scraper - Find More Investors")
     
-    # Initialize the web scraper
+    # Add description
+    st.markdown("""
+    Use our web scraper to find additional investors that match your criteria.
+    This tool searches investor directories and websites to find potential matches.
+    """)
+    
+    # Initialize scraper
     scraper = InvestorWebScraper()
     
-    with st.expander("About Web Intelligence", expanded=False):
-        st.write("""
-        This section uses web scraping to find additional information about investors related to your search.
-        The data is gathered from public sources and may complement the API results.
-        """)
-    
-    if not search_terms:
-        st.info("Enter search terms in the main search section to find related investors from the web.")
-        return
-    
-    with st.spinner("Searching the web for additional investor information..."):
-        # Search for investors based on search terms
-        web_results = scraper.search_for_investors(search_terms, location)
+    # Create form for search inputs
+    with st.form("web_scraper_form"):
+        col1, col2 = st.columns(2)
         
-        if web_results:
-            st.success(f"Found {len(web_results)} additional investors from web sources")
+        with col1:
+            # Use search terms from main search if available
+            default_terms = ", ".join(search_terms) if search_terms else ""
+            search_input = st.text_input(
+                "Search Terms",
+                value=default_terms,
+                placeholder="e.g., Venture Capital, AI, Series A"
+            )
+        
+        with col2:
+            # Use location from main search if available
+            location_input = st.text_input(
+                "Location",
+                value=location if location else "",
+                placeholder="e.g., San Francisco, Europe"
+            )
+        
+        # Submit button
+        submitted = st.form_submit_button("Scrape Web for Investors", type="primary")
+    
+    # Process form submission
+    if submitted:
+        if not search_input:
+            st.warning("Please enter at least one search term")
+            return
+        
+        # Parse search terms
+        terms = [term.strip() for term in search_input.split(",") if term.strip()]
+        
+        with st.spinner("Searching the web for investors..."):
+            # Search for investors
+            results = scraper.search_investors(terms, location_input)
             
-            # Display results in tabs
-            tab1, tab2 = st.tabs(["Investor List", "Detailed View"])
-            
-            with tab1:
-                # Create a table of investors
-                investor_df = pd.DataFrame([
-                    {
-                        'Name': inv['name'],
-                        'Type': inv['type'],
-                        'Location': inv['location'],
-                        'Focus': ', '.join(inv.get('focus_areas', [])),
-                        'Stages': ', '.join(inv.get('investment_stages', []))
-                    }
-                    for inv in web_results
-                ])
+            if not results.empty:
+                st.success(f"Found {len(results)} investors from web sources")
                 
-                st.dataframe(investor_df, use_container_width=True)
-            
-            with tab2:
-                # Show detailed information for each investor
-                for i, investor in enumerate(web_results):
-                    with st.expander(f"{investor['name']} - {investor['type']}"):
-                        col1, col2 = st.columns([2, 1])
-                        
-                        with col1:
-                            st.write(f"**Location:** {investor['location']}")
+                # Display results
+                st.write("### Web Search Results")
+                
+                # Create tabs for different views
+                tab1, tab2 = st.tabs(["List View", "Map View"])
+                
+                with tab1:
+                    # Enhanced list view with more details
+                    for i, row in results.iterrows():
+                        with st.expander(f"{row['name']} - {row['type']}"):
+                            col1, col2 = st.columns([2, 1])
                             
-                            if 'focus_areas' in investor and investor['focus_areas']:
-                                st.write(f"**Focus Areas:** {', '.join(investor['focus_areas'])}")
+                            with col1:
+                                st.write(f"**Location:** {row['location']}")
+                                st.write(f"**Investments:** {row['investments']}")
+                                st.write(f"**Investment Stages:** {', '.join(row['investment_stages'])}")
+                                st.write(f"**Focus Areas:** {', '.join(row['focus_areas'])}")
+                                
+                                # Add button to get more details
+                                if st.button(f"Get Details for {row['name']}", key=f"details_{i}"):
+                                    with st.spinner(f"Getting details for {row['name']}..."):
+                                        details = scraper.get_investor_details(row['profile_url'])
+                                        
+                                        if details:
+                                            st.write("#### Detailed Information")
+                                            
+                                            st.write(f"**Description:** {details['description']}")
+                                            st.write(f"**Founded:** {details['founded']}")
+                                            st.write(f"**Headquarters:** {details['headquarters']}")
+                                            st.write(f"**Assets Under Management:** {details['assets_under_management']}")
+                                            
+                                            st.write("**Investment Criteria:**")
+                                            criteria = details['investment_criteria']
+                                            st.write(f"- Min Investment: {criteria['min_investment']}")
+                                            st.write(f"- Max Investment: {criteria['max_investment']}")
+                                            st.write(f"- Preferred Stages: {', '.join(criteria['preferred_stages'])}")
+                                            st.write(f"- Geographic Focus: {', '.join(criteria['geographic_focus'])}")
+                                            st.write(f"- Sector Focus: {', '.join(criteria['sector_focus'])}")
+                                            
+                                            st.write("**Portfolio Companies:**")
+                                            portfolio_df = pd.DataFrame(details['portfolio_companies'])
+                                            st.dataframe(portfolio_df)
+                                            
+                                            st.write("**Team Members:**")
+                                            for member in details['team_members'][:3]:  # Show first 3 members
+                                                st.write(f"- **{member['name']}** - {member['title']}")
+                                            
+                                            st.write("**Contact Information:**")
+                                            contact = details['contact_info']
+                                            st.write(f"- Email: {contact['email']}")
+                                            st.write(f"- Phone: {contact['phone']}")
+                                            st.write(f"- Twitter: [{contact['social_media']['twitter']}]({contact['social_media']['twitter']})")
+                                            st.write(f"- LinkedIn: [{contact['social_media']['linkedin']}]({contact['social_media']['linkedin']})")
+                                        else:
+                                            st.warning("Could not retrieve detailed information")
                             
-                            if 'investment_stages' in investor and investor['investment_stages']:
-                                st.write(f"**Investment Stages:** {', '.join(investor['investment_stages'])}")
-                            
-                            st.write(f"**Description:** {investor.get('description', 'No description available')}")
-                            
-                            if 'source_url' in investor and investor['source_url']:
-                                st.write(f"**Source:** [{investor['source_url']}]({investor['source_url']})")
-                        
-                        with col2:
-                            # Show portfolio companies button
-                            if st.button(f"View Portfolio Companies", key=f"portfolio_{i}"):
-                                portfolio = scraper.get_portfolio_companies(investor['name'])
-                                if portfolio:
-                                    st.write("**Portfolio Companies:**")
-                                    for company in portfolio:
-                                        st.write(f"- **{company['name']}**: {company.get('description', '')}")
-                                else:
-                                    st.info("No portfolio companies found")
-                        
-                        # Show recent news if available
-                        if 'recent_news' in investor and investor['recent_news']:
-                            st.write("**Recent News:**")
-                            for news in investor['recent_news']:
-                                st.write(f"- **{news['title']}** ({news['date']})")
-                                st.write(f"  {news['snippet']}")
-                                if news.get('url'):
-                                    st.write(f"  [Read more]({news['url']})")
-        else:
-            st.warning("No additional investors found from web sources. Try different search terms.") 
+                            with col2:
+                                # Display a small map for the investor location
+                                if 'latitude' in row and 'longitude' in row:
+                                    st.write("**Location Map:**")
+                                    location_df = pd.DataFrame({
+                                        'lat': [row['latitude']],
+                                        'lon': [row['longitude']],
+                                        'name': [row['name']]
+                                    })
+                                    st.map(location_df, zoom=4)
+                
+                with tab2:
+                    # Map view of all investors
+                    if 'latitude' in results.columns and 'longitude' in results.columns:
+                        st.write("**Global Investor Map**")
+                        map_data = pd.DataFrame({
+                            'lat': results['latitude'],
+                            'lon': results['longitude'],
+                            'name': results['name']
+                        })
+                        st.map(map_data)
+                    else:
+                        st.warning("Location data not available for map view")
+                
+                # Add option to save results
+                if st.button("Save These Investors to Your Results"):
+                    if 'search_results' in st.session_state:
+                        # Combine with existing results
+                        combined_results = pd.concat([st.session_state.search_results, results], ignore_index=True)
+                        # Remove duplicates based on name
+                        combined_results = combined_results.drop_duplicates(subset=['name'])
+                        st.session_state.search_results = combined_results
+                        st.success(f"Added {len(results)} investors to your search results")
+                    else:
+                        # Set as new results
+                        st.session_state.search_results = results
+                        st.success(f"Saved {len(results)} investors to your search results")
+            else:
+                st.warning("No investors found matching your criteria")
+                st.info("Try using different search terms or removing the location filter") 

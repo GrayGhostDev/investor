@@ -9,6 +9,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import openai
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -354,239 +355,423 @@ class EmailAlertManager:
             </html>
             """
 
-def render_email_alerts_section(investors_df: pd.DataFrame = None):
-    """Render the email alerts and notifications section"""
-    st.header("Email Alerts & Notifications")
+class EmailAlertSystem:
+    """System for managing email alerts for investor updates"""
     
-    # Initialize alert manager
-    alert_manager = EmailAlertManager()
+    def __init__(self):
+        """Initialize the email alert system"""
+        # In a real application, this would connect to an email service
+        # For this demo, we'll just store alerts in session state
+        if 'email_alerts' not in st.session_state:
+            st.session_state.email_alerts = []
+        
+        # Load saved alerts if available
+        self.load_alerts()
+    
+    def create_alert(self, 
+                    email: str, 
+                    alert_name: str,
+                    investors: List[str],
+                    frequency: str,
+                    alert_type: str,
+                    keywords: Optional[List[str]] = None) -> bool:
+        """
+        Create a new email alert
+        
+        Args:
+            email: User's email address
+            alert_name: Name of the alert
+            investors: List of investor names to track
+            frequency: Alert frequency (daily, weekly, monthly)
+            alert_type: Type of alert (news, funding, all)
+            keywords: Optional list of keywords to track
+            
+        Returns:
+            Boolean indicating success
+        """
+        # Validate email
+        if not self._validate_email(email):
+            return False
+        
+        # Create alert object
+        alert = {
+            "id": len(st.session_state.email_alerts) + 1,
+            "email": email,
+            "name": alert_name,
+            "investors": investors,
+            "frequency": frequency,
+            "type": alert_type,
+            "keywords": keywords if keywords else [],
+            "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_sent": None,
+            "status": "active"
+        }
+        
+        # Add to alerts list
+        st.session_state.email_alerts.append(alert)
+        
+        # Save alerts
+        self.save_alerts()
+        
+        return True
+    
+    def update_alert(self, alert_id: int, updates: Dict[str, Any]) -> bool:
+        """
+        Update an existing alert
+        
+        Args:
+            alert_id: ID of the alert to update
+            updates: Dictionary of fields to update
+            
+        Returns:
+            Boolean indicating success
+        """
+        # Find alert by ID
+        for i, alert in enumerate(st.session_state.email_alerts):
+            if alert["id"] == alert_id:
+                # Update fields
+                for key, value in updates.items():
+                    if key in alert:
+                        alert[key] = value
+                
+                # Update in session state
+                st.session_state.email_alerts[i] = alert
+                
+                # Save alerts
+                self.save_alerts()
+                
+                return True
+        
+        return False
+    
+    def delete_alert(self, alert_id: int) -> bool:
+        """
+        Delete an alert
+        
+        Args:
+            alert_id: ID of the alert to delete
+            
+        Returns:
+            Boolean indicating success
+        """
+        # Find alert by ID
+        for i, alert in enumerate(st.session_state.email_alerts):
+            if alert["id"] == alert_id:
+                # Remove from list
+                st.session_state.email_alerts.pop(i)
+                
+                # Save alerts
+                self.save_alerts()
+                
+                return True
+        
+        return False
+    
+    def get_alerts(self, email: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get all alerts or alerts for a specific email
+        
+        Args:
+            email: Optional email to filter by
+            
+        Returns:
+            List of alert dictionaries
+        """
+        if email:
+            return [alert for alert in st.session_state.email_alerts if alert["email"] == email]
+        else:
+            return st.session_state.email_alerts
+    
+    def save_alerts(self):
+        """Save alerts to session state"""
+        # In a real application, this would save to a database
+        # For this demo, we'll just keep it in session state
+        pass
+    
+    def load_alerts(self):
+        """Load saved alerts"""
+        # In a real application, this would load from a database
+        # For this demo, we'll just use what's in session state
+        pass
+    
+    def _validate_email(self, email: str) -> bool:
+        """
+        Validate email format
+        
+        Args:
+            email: Email address to validate
+            
+        Returns:
+            Boolean indicating if email is valid
+        """
+        pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+        return bool(re.match(pattern, email))
+    
+    def send_test_alert(self, email: str, alert_name: str) -> bool:
+        """
+        Send a test alert email
+        
+        Args:
+            email: Email address to send to
+            alert_name: Name of the alert
+            
+        Returns:
+            Boolean indicating success
+        """
+        # In a real application, this would send an actual email
+        # For this demo, we'll just return success
+        if not self._validate_email(email):
+            return False
+        
+        # Simulate sending email
+        st.success(f"Test alert '{alert_name}' would be sent to {email}")
+        return True
+
+def render_email_alerts_section(df: Optional[pd.DataFrame] = None):
+    """
+    Render the email alerts section in the Streamlit app
+    
+    Args:
+        df: Optional DataFrame containing investor data
+    """
+    st.header("Email Alerts")
+    
+    # Add description
+    st.markdown("""
+    Set up email alerts to stay updated on investor activities and news.
+    Get notified when there are new funding rounds, news mentions, or other updates
+    about the investors you're tracking.
+    """)
+    
+    # Initialize alert system
+    alert_system = EmailAlertSystem()
     
     # Create tabs for different sections
-    tabs = st.tabs(["My Alerts", "Create Alert", "Notification Settings"])
+    tab1, tab2 = st.tabs(["Create Alert", "Manage Alerts"])
     
-    with tabs[0]:
-        st.subheader("My Email Alerts")
+    with tab1:
+        st.subheader("Create New Alert")
         
-        # Email input for retrieving alerts
-        email = st.text_input("Enter your email to view your alerts:", key="view_alerts_email")
-        
-        if email:
-            user_alerts = alert_manager.get_user_alerts(email)
+        # Create form for alert creation
+        with st.form("create_alert_form"):
+            col1, col2 = st.columns(2)
             
-            if user_alerts:
-                st.success(f"Found {len(user_alerts)} alerts for {email}")
+            with col1:
+                email = st.text_input(
+                    "Email Address",
+                    placeholder="your.email@example.com"
+                )
                 
-                for alert in user_alerts:
-                    with st.expander(f"{alert['name']} ({alert['frequency'].title()})"):
+                alert_name = st.text_input(
+                    "Alert Name",
+                    placeholder="e.g., Top VC Updates"
+                )
+                
+                frequency = st.selectbox(
+                    "Alert Frequency",
+                    options=["Daily", "Weekly", "Monthly"]
+                )
+            
+            with col2:
+                alert_type = st.selectbox(
+                    "Alert Type",
+                    options=["All Updates", "Funding News", "Press Mentions"]
+                )
+                
+                keywords = st.text_input(
+                    "Keywords (optional)",
+                    placeholder="Enter keywords separated by commas"
+                )
+            
+            # Investor selection
+            if df is not None and not df.empty:
+                investor_options = df['name'].tolist()
+                selected_investors = st.multiselect(
+                    "Select Investors to Track",
+                    options=investor_options,
+                    default=investor_options[:3] if len(investor_options) >= 3 else investor_options
+                )
+            else:
+                selected_investors = []
+                st.warning("No investors available. Please search for investors first.")
+            
+            # Submit button
+            submitted = st.form_submit_button("Create Alert")
+        
+        # Process form submission
+        if submitted:
+            if not email or not alert_name:
+                st.error("Email address and alert name are required")
+            elif not selected_investors:
+                st.error("Please select at least one investor to track")
+            else:
+                # Parse keywords
+                keyword_list = [k.strip() for k in keywords.split(",") if k.strip()] if keywords else []
+                
+                # Create alert
+                success = alert_system.create_alert(
+                    email=email,
+                    alert_name=alert_name,
+                    investors=selected_investors,
+                    frequency=frequency,
+                    alert_type=alert_type,
+                    keywords=keyword_list
+                )
+                
+                if success:
+                    st.success(f"Alert '{alert_name}' created successfully!")
+                    
+                    # Offer to send test alert
+                    if st.button("Send Test Alert"):
+                        alert_system.send_test_alert(email, alert_name)
+                else:
+                    st.error("Failed to create alert. Please check your email address.")
+    
+    with tab2:
+        st.subheader("Manage Your Alerts")
+        
+        # Email input for filtering alerts
+        filter_email = st.text_input(
+            "Enter your email to view your alerts",
+            placeholder="your.email@example.com"
+        )
+        
+        if filter_email:
+            # Get alerts for this email
+            alerts = alert_system.get_alerts(filter_email)
+            
+            if alerts:
+                st.write(f"Found {len(alerts)} alerts for {filter_email}")
+                
+                # Display alerts
+                for alert in alerts:
+                    with st.expander(f"{alert['name']} ({alert['frequency']})"):
                         col1, col2 = st.columns([3, 1])
                         
                         with col1:
-                            st.write(f"**Type:** {alert['alert_type'].replace('_', ' ').title()}")
-                            st.write(f"**Created:** {alert['created_at'][:10]}")
+                            st.write(f"**Alert ID:** {alert['id']}")
+                            st.write(f"**Type:** {alert['type']}")
+                            st.write(f"**Created:** {alert['created_at']}")
+                            st.write(f"**Status:** {alert['status']}")
                             
-                            st.write("**Search Criteria:**")
-                            criteria_text = ""
-                            for key, value in alert['search_criteria'].items():
-                                if value and isinstance(value, (list, tuple)) and len(value) > 0:
-                                    criteria_text += f"- {key.replace('_', ' ').title()}: {', '.join(str(v) for v in value)}\n"
-                                elif value:
-                                    criteria_text += f"- {key.replace('_', ' ').title()}: {value}\n"
+                            st.write("**Tracking Investors:**")
+                            for investor in alert['investors']:
+                                st.markdown(f"- {investor}")
                             
-                            st.markdown(criteria_text)
+                            if alert['keywords']:
+                                st.write("**Keywords:**")
+                                for keyword in alert['keywords']:
+                                    st.markdown(f"- {keyword}")
                         
                         with col2:
-                            # Toggle active status
-                            is_active = st.toggle("Active", value=alert['active'], key=f"toggle_{alert['id']}")
-                            if is_active != alert['active']:
-                                alert_manager.update_alert(alert['id'], {"active": is_active})
-                                st.experimental_rerun()
+                            # Edit button
+                            if st.button("Edit", key=f"edit_{alert['id']}"):
+                                st.session_state.editing_alert = alert
                             
-                            # Send test email
-                            if st.button("Test Email", key=f"test_{alert['id']}"):
-                                alert_manager.send_test_email(email, alert['id'])
-                            
-                            # Delete alert
+                            # Delete button
                             if st.button("Delete", key=f"delete_{alert['id']}"):
-                                if alert_manager.delete_alert(alert['id']):
-                                    st.success("Alert deleted successfully")
-                                    st.experimental_rerun()
+                                if alert_system.delete_alert(alert['id']):
+                                    st.success(f"Alert '{alert['name']}' deleted successfully")
+                                    st.rerun()
                                 else:
                                     st.error("Failed to delete alert")
-            else:
-                st.info(f"No alerts found for {email}. Create a new alert in the 'Create Alert' tab.")
-    
-    with tabs[1]:
-        st.subheader("Create New Alert")
-        
-        # User information
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("Your Name:", key="create_name")
-        with col2:
-            email = st.text_input("Your Email:", key="create_email")
-        
-        # Alert details
-        alert_type = st.selectbox(
-            "Alert Type:",
-            ["new_investors", "investor_updates", "market_changes", "funding_announcements"],
-            format_func=lambda x: x.replace('_', ' ').title()
-        )
-        
-        frequency = st.select_slider(
-            "Alert Frequency:",
-            options=["daily", "weekly", "monthly"],
-            value="weekly",
-            format_func=lambda x: x.title()
-        )
-        
-        # Search criteria
-        st.subheader("Search Criteria")
-        st.info("Define the criteria for investors you want to be alerted about.")
-        
-        criteria_col1, criteria_col2 = st.columns(2)
-        
-        with criteria_col1:
-            investor_types = st.multiselect(
-                "Investor Types:",
-                ["Venture Capital", "Angel Investor", "Private Equity", "Accelerator", "Incubator"],
-                default=[]
-            )
-            
-            investment_stages = st.multiselect(
-                "Investment Stages:",
-                ["Pre-Seed", "Seed", "Series A", "Series B", "Series C", "Growth", "Late Stage"],
-                default=[]
-            )
-            
-            min_investments = st.number_input("Minimum Investments:", min_value=0, value=0)
-        
-        with criteria_col2:
-            locations = st.text_input("Locations (comma-separated):")
-            
-            sectors = st.multiselect(
-                "Sectors:",
-                ["Technology", "Healthcare", "Finance", "Consumer", "Enterprise", "AI/ML", 
-                 "Blockchain", "SaaS", "E-commerce", "Mobile", "IoT", "Clean Tech"],
-                default=[]
-            )
-            
-            keywords = st.text_input("Keywords (comma-separated):")
-        
-        # Create search criteria dictionary
-        search_criteria = {
-            "investor_types": investor_types,
-            "investment_stages": investment_stages,
-            "min_investments": min_investments,
-            "locations": [loc.strip() for loc in locations.split(",")] if locations else [],
-            "sectors": sectors,
-            "keywords": [kw.strip() for kw in keywords.split(",")] if keywords else []
-        }
-        
-        # Create alert button
-        if st.button("Create Alert", type="primary"):
-            if not name or not email:
-                st.error("Please enter your name and email")
-            elif not any(value for value in search_criteria.values() if value):
-                st.error("Please specify at least one search criterion")
-            else:
-                if alert_manager.create_alert(email, name, search_criteria, frequency, alert_type):
-                    st.success("Alert created successfully!")
+                            
+                            # Pause/Resume button
+                            status_label = "Pause" if alert['status'] == "active" else "Resume"
+                            if st.button(status_label, key=f"status_{alert['id']}"):
+                                new_status = "paused" if alert['status'] == "active" else "active"
+                                if alert_system.update_alert(alert['id'], {"status": new_status}):
+                                    st.success(f"Alert '{alert['name']}' {status_label.lower()}d successfully")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Failed to {status_label.lower()} alert")
+                
+                # Check if we're editing an alert
+                if 'editing_alert' in st.session_state:
+                    alert = st.session_state.editing_alert
+                    st.write("### Edit Alert")
                     
-                    # Send test email
-                    if st.button("Send Test Email"):
-                        user_alerts = alert_manager.get_user_alerts(email)
-                        if user_alerts:
-                            alert_manager.send_test_email(email, user_alerts[-1]["id"])
-                else:
-                    st.error("Failed to create alert")
-    
-    with tabs[2]:
-        st.subheader("Notification Settings")
-        
-        # Email input for retrieving user
-        email = st.text_input("Enter your email:", key="settings_email")
-        
-        if email:
-            # Check if user exists
-            if email in alert_manager.alerts["users"]:
-                user = alert_manager.alerts["users"][email]
-                
-                st.success(f"Found settings for {user['name']} ({email})")
-                
-                # Notification preferences
-                st.subheader("Email Preferences")
-                
-                # Frequency
-                current_frequency = user["preferences"].get("frequency", "weekly")
-                new_frequency = st.select_slider(
-                    "Default Alert Frequency:",
-                    options=["daily", "weekly", "monthly"],
-                    value=current_frequency,
-                    format_func=lambda x: x.title()
-                )
-                
-                # Alert types
-                current_types = user["preferences"].get("alert_types", ["new_investors"])
-                new_types = st.multiselect(
-                    "Alert Types:",
-                    ["new_investors", "investor_updates", "market_changes", "funding_announcements"],
-                    default=current_types,
-                    format_func=lambda x: x.replace('_', ' ').title()
-                )
-                
-                # Digest format
-                current_format = user["preferences"].get("digest_format", "individual")
-                new_format = st.radio(
-                    "Email Format:",
-                    ["individual", "digest"],
-                    index=0 if current_format == "individual" else 1,
-                    format_func=lambda x: "Individual Alerts" if x == "individual" else "Daily Digest"
-                )
-                
-                # Update preferences
-                if st.button("Update Preferences"):
-                    preferences = {
-                        "frequency": new_frequency,
-                        "alert_types": new_types,
-                        "digest_format": new_format
-                    }
+                    # Create form for editing
+                    with st.form("edit_alert_form"):
+                        alert_name = st.text_input("Alert Name", value=alert['name'])
+                        frequency = st.selectbox("Frequency", options=["Daily", "Weekly", "Monthly"], index=["Daily", "Weekly", "Monthly"].index(alert['frequency']))
+                        alert_type = st.selectbox("Type", options=["All Updates", "Funding News", "Press Mentions"], index=["All Updates", "Funding News", "Press Mentions"].index(alert['type']))
+                        
+                        # Keywords
+                        keywords = st.text_input("Keywords (comma-separated)", value=", ".join(alert['keywords']))
+                        
+                        # Investor selection
+                        if df is not None and not df.empty:
+                            investor_options = df['name'].tolist()
+                            selected_investors = st.multiselect(
+                                "Investors to Track",
+                                options=investor_options,
+                                default=alert['investors']
+                            )
+                        else:
+                            selected_investors = alert['investors']
+                            st.write(f"**Currently tracking:** {', '.join(selected_investors)}")
+                        
+                        # Submit button
+                        update_submitted = st.form_submit_button("Update Alert")
                     
-                    if alert_manager.update_user_preferences(email, preferences):
-                        st.success("Preferences updated successfully")
-                    else:
-                        st.error("Failed to update preferences")
-                
-                # Send test email
-                if st.button("Send Test Email", key="test_settings"):
-                    alert_manager.send_test_email(email)
-            else:
-                st.info(f"No settings found for {email}. Create an alert first to set up your profile.")
-    
-    # If we have investor data, show a preview section
-    if investors_df is not None and not investors_df.empty:
-        st.header("Alert Preview")
-        st.info("See what your alert email would look like with the current search results.")
-        
-        email_preview = st.text_input("Enter your email for preview:")
-        
-        if email_preview and email_preview in alert_manager.alerts["users"]:
-            user_alerts = alert_manager.get_user_alerts(email_preview)
-            
-            if user_alerts:
-                selected_alert = st.selectbox(
-                    "Select an alert to preview:",
-                    user_alerts,
-                    format_func=lambda x: x["name"]
-                )
-                
-                if selected_alert:
-                    # Generate preview content
-                    content = alert_manager.generate_email_content(selected_alert, investors_df)
+                    # Process form submission
+                    if update_submitted:
+                        if not alert_name:
+                            st.error("Alert name is required")
+                        elif not selected_investors:
+                            st.error("Please select at least one investor to track")
+                        else:
+                            # Parse keywords
+                            keyword_list = [k.strip() for k in keywords.split(",") if k.strip()]
+                            
+                            # Update alert
+                            updates = {
+                                "name": alert_name,
+                                "frequency": frequency,
+                                "type": alert_type,
+                                "keywords": keyword_list,
+                                "investors": selected_investors
+                            }
+                            
+                            success = alert_system.update_alert(alert['id'], updates)
+                            
+                            if success:
+                                st.success(f"Alert '{alert_name}' updated successfully!")
+                                # Clear editing state
+                                del st.session_state.editing_alert
+                                st.rerun()
+                            else:
+                                st.error("Failed to update alert")
                     
-                    # Show preview
-                    with st.expander("Email Preview", expanded=True):
-                        st.markdown(content, unsafe_allow_html=True)
+                    # Cancel button
+                    if st.button("Cancel Edit"):
+                        del st.session_state.editing_alert
+                        st.rerun()
             else:
-                st.warning("No alerts found for this email.")
-        elif email_preview:
-            st.warning("Email not found. Please create an alert first.") 
+                st.info(f"No alerts found for {filter_email}")
+                st.write("Create a new alert in the 'Create Alert' tab.")
+        else:
+            st.info("Enter your email address to view and manage your alerts")
+    
+    # Add information about alert functionality
+    st.markdown("---")
+    st.markdown("""
+    ### About Email Alerts
+    
+    Our email alert system helps you stay updated on investor activities without having to manually check for updates.
+    
+    **Alert Types:**
+    - **All Updates**: Receive all types of updates about the selected investors
+    - **Funding News**: Get notified when the investors make new investments
+    - **Press Mentions**: Receive alerts when the investors are mentioned in news articles
+    
+    **Frequency Options:**
+    - **Daily**: Receive updates every day (if there are any)
+    - **Weekly**: Get a weekly digest of updates
+    - **Monthly**: Receive a monthly summary of investor activities
+    
+    **Keywords:**
+    Add specific keywords to filter the updates you receive. For example, if you're interested in AI investments,
+    add keywords like "artificial intelligence", "machine learning", or "AI".
+    """) 

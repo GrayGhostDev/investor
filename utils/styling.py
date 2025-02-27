@@ -1,82 +1,115 @@
 import streamlit as st
 
 def set_page_config():
-    """Configure the Streamlit page"""
+    """Set the page configuration for the Streamlit app"""
     st.set_page_config(
         page_title="Investor Search Platform",
-        page_icon="💰",
+        page_icon="💼",
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="expanded",
     )
 
 def load_css():
-    """Load custom CSS styles"""
+    """Load custom CSS styling for the application"""
     st.markdown("""
-        <style>
-            /* Custom styles from assets/styles.css */
-            .stApp {
-                max-width: 1200px;
-                margin: 0 auto;
-            }
-            
-            .stHeader {
-                background-color: #ffffff;
-                padding: 1rem 0;
-            }
-            
-            .stMetric {
-                background-color: #f8f9fa;
-                padding: 1rem;
-                border-radius: 0.5rem;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-            
-            .stPlotlyChart {
-                background-color: #ffffff;
-                padding: 1rem;
-                border-radius: 0.5rem;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-            
-            .stDataFrame {
-                background-color: #ffffff;
-                padding: 1rem;
-                border-radius: 0.5rem;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-            
-            /* Loading animation */
-            .stSpinner {
-                text-align: center;
-                max-width: 50%;
-                margin: 0 auto;
-            }
-            
-            /* Button styling */
-            .stButton>button {
-                background-color: #0066cc;
-                color: white;
-                border-radius: 0.3rem;
-                padding: 0.5rem 1rem;
-                border: none;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-            
-            .stButton>button:hover {
-                background-color: #0052a3;
-                border: none;
-            }
-            
-            /* Tab styling */
-            .stTab {
-                background-color: #ffffff;
-                border-radius: 0.5rem 0.5rem 0 0;
-            }
-            
-            /* Alert/Info styling */
-            .stAlert {
-                border-radius: 0.5rem;
-                margin: 1rem 0;
-            }
-        </style>
+    <style>
+    /* Main container styling */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    
+    /* Header styling */
+    h1 {
+        color: #1E3A8A;
+        font-weight: 700;
+        margin-bottom: 1.5rem;
+    }
+    
+    h2 {
+        color: #1E3A8A;
+        font-weight: 600;
+        margin-top: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    h3 {
+        color: #2563EB;
+        font-weight: 600;
+        margin-top: 1rem;
+        margin-bottom: 0.75rem;
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        font-weight: 600;
+        border-radius: 0.375rem;
+    }
+    
+    /* Primary button */
+    .stButton > button[data-baseweb="button"] {
+        background-color: #2563EB;
+        color: white;
+    }
+    
+    /* Card styling for investor results */
+    div[data-testid="stExpander"] {
+        border: 1px solid #E5E7EB;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        border-radius: 4px 4px 0 0;
+        gap: 1px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #E0E7FF;
+        color: #1E3A8A;
+        font-weight: 600;
+    }
+    
+    /* Form styling */
+    div[data-testid="stForm"] {
+        border: 1px solid #E5E7EB;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    /* Metric styling */
+    div[data-testid="stMetric"] {
+        background-color: #F3F4F6;
+        border-radius: 0.5rem;
+        padding: 1rem;
+    }
+    
+    div[data-testid="stMetricLabel"] {
+        font-size: 1rem;
+    }
+    
+    div[data-testid="stMetricValue"] {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #1E3A8A;
+    }
+    
+    /* Dataframe styling */
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #E5E7EB;
+        border-radius: 0.5rem;
+        padding: 0.5rem;
+    }
+    </style>
     """, unsafe_allow_html=True)

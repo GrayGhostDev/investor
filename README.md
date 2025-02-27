@@ -12,39 +12,16 @@ An advanced investor search and analysis platform that provides comprehensive da
 - 📡 **Real-time Market Sentiment**: Track market trends and sentiment
 - 🔤 **Financial Jargon Translator**: Simplify complex financial terms
 
-## Technology Stack
+## GitHub Repository
 
-- **Frontend**: Streamlit
-- **Database**: PostgreSQL with SQLAlchemy ORM
-- **Data Processing**: Python, Pandas
-- **Visualization**: Plotly
-- **AI Integration**: OpenAI API
-- **Web Scraping**: Trafilatura
-
-## Project Structure
-
-```
-├── .streamlit/          # Streamlit configuration
-├── assets/             # Static assets and styles
-├── components/         # UI components
-│   ├── search.py       # Search functionality
-│   ├── dashboard.py    # Dashboard views
-│   ├── visualizations.py # Data visualizations
-│   ├── pitch_deck.py   # Pitch deck generator
-│   ├── comparison.py   # Investor comparison
-│   ├── sentiment.py    # Market sentiment tracker
-│   └── translator.py   # Jargon translator
-├── database.py        # Database configuration
-├── main.py           # Main application entry
-└── InvestorSearchTool.py # Core search functionality
-```
+The project is hosted on GitHub at: [https://github.com/GrayGhostDev/investor](https://github.com/GrayGhostDev/investor)
 
 ## Environment Setup
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/investor-search-platform.git
-cd investor-search-platform
+git clone https://github.com/GrayGhostDev/investor.git
+cd investor
 ```
 
 2. Set up environment variables:
@@ -66,36 +43,17 @@ export OPENAI_API_KEY=your_openai_api_key
 streamlit run main.py
 ```
 
-## Dependencies
+## Deployment
 
-The application requires the following Python packages:
-- streamlit
-- pandas
-- plotly
-- sqlalchemy
-- psycopg2-binary
-- openai
-- trafilatura
-- fake-useragent
-- openpyxl
-- xlsxwriter
-- beautifulsoup4
-
-## Usage
-
-1. **Search**: Use the search tab to find investors based on various criteria
-2. **Dashboard**: View key metrics and insights about selected investors
-3. **Analysis**: Explore detailed visualizations and trends
-4. **Pitch Deck**: Generate AI-powered pitch deck content
-5. **Compare**: Compare multiple investors side by side
-6. **Market Sentiment**: Track real-time market trends
-7. **Translator**: Translate complex financial terms
+For deploying to Streamlit Cloud, follow the instructions in the `STREAMLIT_CLOUD.md` file.
 
 ## Contributing
 
+Please see the `CONTRIBUTING.md` file for guidelines on how to contribute to this project.
+
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+3. Commit your changes (`git commit -m "Add some AmazingFeature"`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
